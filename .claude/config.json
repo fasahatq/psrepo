@@ -1,0 +1,120 @@
+{
+  "project_root": ".",
+  "inbox_dir": "inbox",
+  "processing_dir": "processing",
+  "outputs_dir": "outputs",
+  "logs_dir": "logs",
+
+  "data_mode": "flat_outlet",
+  "sku_file": "India_Synthetic_SKU_Data.csv",
+
+  "columns": {
+    "outlet_id": "OUTLET_UID_EDITED",
+    "state": "DB State",
+    "city_tier": "Top City",
+    "cohort": "COHORT",
+    "channel": "channel",
+    "sub_channel": "sub_channel_name",
+    "store_format": "store_format",
+    "sector": "sector",
+    "monthly_revenue": "VPO",
+    "total_revenue": "TOTAL_REVENUE",
+    "avg_sku": "AVG_SKU",
+    "active_months": "ACTIVE_MONTHS",
+    "business_index": "BI"
+  },
+
+  "dq_checks": {
+    "null_threshold_pct": 60.0,
+    "sku_column_keywords": ["LAYS", "KURKURE", "DORITOS", "UNCLE CHIPPS", "CHEETOS", "QUAKER", "KKNMK"],
+    "required_columns": [
+      "OUTLET_UID_EDITED",
+      "VPO",
+      "TOTAL_REVENUE",
+      "AVG_SKU",
+      "ACTIVE_MONTHS",
+      "BI",
+      "Top City",
+      "COHORT",
+      "DB State"
+    ],
+    "volume_outlier_col": "VPO",
+    "volume_outlier_multiplier": 10,
+    "id_col": "OUTLET_UID_EDITED"
+  },
+
+  "segmentation": {
+    "n_clusters": 6,
+    "id_col": "OUTLET_UID_EDITED",
+
+    "numeric_features": [
+      "VPO",
+      "TOTAL_REVENUE",
+      "AVG_SKU",
+      "ACTIVE_MONTHS",
+      "store_size",
+      "nbrhd_per_capita_income",
+      "estmtd_daily_footfall_numeric",
+      "sec_a_hhs",
+      "sec_b_hhs",
+      "sec_c_hhs",
+      "sec_d_hhs",
+      "sec_e_hhs",
+      "no_of_schools_in_a_1_km_radius",
+      "no_of_colleges_in_a_1_km_radius",
+      "distance_to_nearest_school_in_km",
+      "distance_to_nearest_large_office_in_km",
+      "distance_to_nearest_bus_stn_in_km",
+      "distance_to_nearest_train_stn_in_km",
+      "distance_to_nearest_malls",
+      "nearest_pepsi_distributer_distance_in_km",
+      "priority_bucket_num",
+      "LAYS MEDIUM 10",
+      "KURKURE MEDIUM 10",
+      "KURKURE SMALL 5",
+      "LAYS SMALL 5",
+      "LAYS LARGE 20",
+      "KURKURE LARGE 20",
+      "UNCLE CHIPPS MEDIUM 10"
+    ],
+
+    "categorical_features": [
+      "channel",
+      "sub_channel_name",
+      "store_format",
+      "sector",
+      "cooler_available",
+      "store_size_bracket",
+      "estmtd_daily_footfall_tag",
+      "urban_vs_periphery_tagging",
+      "chocolates_avlblty",
+      "biscuits_avlblty",
+      "noodles_avlblty",
+      "premium_category_sold",
+      "premium_snacks_sold",
+      "western_salty_lead_pack",
+      "BI"
+    ],
+
+    "label_features": [
+      "DB State",
+      "Top City",
+      "pepsi_top_city_name",
+      "COHORT",
+      "channel",
+      "sub_channel_name",
+      "store_format",
+      "sector",
+      "cooler_available",
+      "store_size_bracket",
+      "estmtd_daily_footfall_tag",
+      "urban_vs_periphery_tagging",
+      "premium_category_sold",
+      "nearest_pepsi_distributor_name"
+    ],
+
+    "min_features_required": 3,
+    "chunk_size": 50000,
+    "random_state": 42
+  }
+}
