@@ -8,11 +8,6 @@ __pycache__/
 .venv/
 venv/
 
-# Data & generated artifacts
-inbox/
-processing/
-outputs/
-logs/
 
 # Claude Code local config (machine-specific)
 .claude/settings.json

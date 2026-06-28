@@ -1,0 +1,355 @@
+2026-06-27 19:09:09 | perfect_store.pipeline         | INFO  | =================================================================
+2026-06-27 19:09:09 | perfect_store.pipeline         | INFO  | Perfect Store Pipeline | run_id: Market_Master_File_20260627_190909
+2026-06-27 19:09:09 | perfect_store.pipeline         | INFO  | File      : inbox/Market_Master_File.csv
+2026-06-27 19:09:09 | perfect_store.pipeline         | INFO  | Data mode : flat_outlet
+2026-06-27 19:09:09 | perfect_store.pipeline         | INFO  | LLM backend : vertex  |  model: gemini-2.5-flash
+2026-06-27 19:09:09 | perfect_store.pipeline         | INFO  | =================================================================
+2026-06-27 19:09:09 | perfect_store.pipeline         | INFO  | Step 1/7 — Loading data
+2026-06-27 19:09:09 | perfect_store.pipeline         | INFO  | Loading Market_Master_File.csv ...
+2026-06-27 19:09:09 | perfect_store.pipeline         | INFO  | File has ~10,000 rows
+2026-06-27 19:09:09 | perfect_store.pipeline         | INFO  |   Loaded 10,000 rows...
+2026-06-27 19:09:09 | perfect_store.pipeline         | INFO  | Loaded 10,000 rows × 121 columns
+2026-06-27 19:09:09 | perfect_store.pipeline         | INFO  | Step 2/7 — Running DQ checks
+2026-06-27 19:09:09 | perfect_store.pipeline         | INFO  | DQ: 5/7 checks passed
+2026-06-27 19:09:10 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-27 19:09:10 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-27 19:09:21 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-27 19:09:21 | perfect_store.pipeline         | INFO  | LLM DQ verdict: PASS
+2026-06-27 19:09:21 | perfect_store.pipeline         | INFO  | DQ report saved: /home/burmaburma1010/mode/logs/dq_report_Market_Master_File_20260627_190909.txt
+2026-06-27 19:09:21 | perfect_store.pipeline         | INFO  | Step 3/7 — Prioritization (A/B/C/D + opportunity gap)
+2026-06-27 19:09:21 | perfect_store.prioritization   | INFO  | =======================================================
+2026-06-27 19:09:21 | perfect_store.prioritization   | INFO  | Prioritization Agent starting
+2026-06-27 19:09:21 | perfect_store.prioritization   | INFO  |   Outlets: 10,000 | VPO column: VPO
+2026-06-27 19:09:21 | perfect_store.prioritization   | INFO  | =======================================================
+2026-06-27 19:09:21 | perfect_store.prioritization   | INFO  | Step 1/4 — Assigning A/B/C/D buckets
+2026-06-27 19:09:21 | perfect_store.prioritization   | INFO  | Bucket distribution:
+2026-06-27 19:09:21 | perfect_store.prioritization   | INFO  |   Bucket A: 2,000 outlets (20.0%)
+2026-06-27 19:09:21 | perfect_store.prioritization   | INFO  |   Bucket B: 2,000 outlets (20.0%)
+2026-06-27 19:09:21 | perfect_store.prioritization   | INFO  |   Bucket C: 3,000 outlets (30.0%)
+2026-06-27 19:09:21 | perfect_store.prioritization   | INFO  |   Bucket D: 3,000 outlets (30.0%)
+2026-06-27 19:09:21 | perfect_store.prioritization   | INFO  | Step 2/4 — Building potential features
+2026-06-27 19:09:21 | perfect_store.prioritization   | INFO  | Potential model using 22 features: ['nbrhd_per_capita_income', 'sec_a_hhs', 'sec_b_hhs', 'sec_c_hhs', 'sec_d_hhs', 'sec_e_hhs', 'distance_to_nearest_large_office_in_km', 'distance_to_nearest_malls', 'distance_to_nearest_bus_stn_in_km', 'distance_to_nearest_train_stn_in_km', 'distance_to_nearest_school_in_km', 'distance_to_nearest_commercial_place', 'no_of_schools_in_a_1_km_radius', 'no_of_colleges_in_a_1_km_radius', 'estmtd_daily_footfall_numeric', 'store_size', 'AVG_SKU', 'ACTIVE_MONTHS', 'cooler_available_bin', 'BI_bin', 'is_modern_trade', 'is_urban']
+2026-06-27 19:09:21 | perfect_store.prioritization   | INFO  | Step 3/4 — Fitting quantile regression (q=0.75)
+2026-06-27 19:09:24 | perfect_store.prioritization   | INFO  | Fitted sklearn QuantileRegressor (q=0.75)
+2026-06-27 19:09:24 | perfect_store.prioritization   | INFO  | Potential model — predicted VPO: min=0  mean=3,658  max=15,217  (q=0.75)
+2026-06-27 19:09:24 | perfect_store.prioritization   | INFO  | Step 4/4 — Computing opportunity gaps and plus tags
+2026-06-27 19:09:24 | perfect_store.prioritization   | INFO  | Priority distribution:
+2026-06-27 19:09:24 | perfect_store.prioritization   | INFO  |   A+ : 644 outlets | avg opportunity gap ₹1,592/month
+2026-06-27 19:09:24 | perfect_store.prioritization   | INFO  |   A  : 1,356 outlets | avg opportunity gap ₹-7,284/month
+2026-06-27 19:09:24 | perfect_store.prioritization   | INFO  |   B+ : 1,464 outlets | avg opportunity gap ₹1,789/month
+2026-06-27 19:09:24 | perfect_store.prioritization   | INFO  |   B  : 536 outlets | avg opportunity gap ₹-1,055/month
+2026-06-27 19:09:24 | perfect_store.prioritization   | INFO  |   C+ : 2,567 outlets | avg opportunity gap ₹1,589/month
+2026-06-27 19:09:24 | perfect_store.prioritization   | INFO  |   C  : 433 outlets | avg opportunity gap ₹-545/month
+2026-06-27 19:09:24 | perfect_store.prioritization   | INFO  |   D+ : 2,820 outlets | avg opportunity gap ₹1,316/month
+2026-06-27 19:09:24 | perfect_store.prioritization   | INFO  |   D  : 180 outlets | avg opportunity gap ₹-302/month
+2026-06-27 19:09:24 | perfect_store.prioritization   | INFO  | Requesting LLM priority narrative...
+2026-06-27 19:09:24 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-27 19:09:24 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-27 19:09:42 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-27 19:09:42 | perfect_store.pipeline         | INFO  | Priority distribution:
+2026-06-27 19:09:42 | perfect_store.pipeline         | INFO  |   A  : 1,356 outlets | avg gap ₹-7,284/month
+2026-06-27 19:09:42 | perfect_store.pipeline         | INFO  |   A+ : 644 outlets | avg gap ₹1,592/month
+2026-06-27 19:09:42 | perfect_store.pipeline         | INFO  |   B  : 536 outlets | avg gap ₹-1,055/month
+2026-06-27 19:09:42 | perfect_store.pipeline         | INFO  |   B+ : 1,464 outlets | avg gap ₹1,789/month
+2026-06-27 19:09:42 | perfect_store.pipeline         | INFO  |   C  : 433 outlets | avg gap ₹-545/month
+2026-06-27 19:09:42 | perfect_store.pipeline         | INFO  |   C+ : 2,567 outlets | avg gap ₹1,589/month
+2026-06-27 19:09:42 | perfect_store.pipeline         | INFO  |   D  : 180 outlets | avg gap ₹-302/month
+2026-06-27 19:09:42 | perfect_store.pipeline         | INFO  |   D+ : 2,820 outlets | avg gap ₹1,316/month
+2026-06-27 19:09:42 | perfect_store.pipeline         | INFO  | Priority narrative saved: /home/burmaburma1010/mode/logs/priority_narrative_Market_Master_File_20260627_190909.txt
+2026-06-27 19:09:42 | perfect_store.pipeline         | INFO  | Step 4/7 — Segmentation
+2026-06-27 19:09:42 | perfect_store.segmentation     | INFO  | Engineering features...
+2026-06-27 19:09:42 | perfect_store.segmentation     | INFO  | Priority bucket encoded as numeric feature (A=4, B=3, C=2, D=1)
+2026-06-27 19:09:42 | perfect_store.segmentation     | INFO  | Using 44 features for clustering: ['VPO', 'TOTAL_REVENUE', 'AVG_SKU', 'ACTIVE_MONTHS', 'store_size', 'nbrhd_per_capita_income', 'estmtd_daily_footfall_numeric', 'sec_a_hhs', 'sec_b_hhs', 'sec_c_hhs', 'sec_d_hhs', 'sec_e_hhs', 'no_of_schools_in_a_1_km_radius', 'no_of_colleges_in_a_1_km_radius', 'distance_to_nearest_school_in_km', 'distance_to_nearest_large_office_in_km', 'distance_to_nearest_bus_stn_in_km', 'distance_to_nearest_train_stn_in_km', 'distance_to_nearest_malls', 'nearest_pepsi_distributer_distance_in_km', 'priority_bucket_num', 'LAYS MEDIUM 10', 'KURKURE MEDIUM 10', 'KURKURE SMALL 5', 'LAYS SMALL 5', 'LAYS LARGE 20', 'KURKURE LARGE 20', 'UNCLE CHIPPS MEDIUM 10', 'cooler_available_num', 'chocolates_avlblty_num', 'biscuits_avlblty_num', 'noodles_avlblty_num', 'protein_bars_avlblty_num', 'oats_avlblty_num', 'premium_category_sold_num', 'premium_snacks_sold_num', 'BI_num', 'store_size_bracket_num', 'western_salty_lead_pack_num', 'chocolates_lead_pack_num', 'biscuits_lead_pack_num', 'is_modern_trade', 'is_urban', 'is_urban_sector']
+2026-06-27 19:09:42 | perfect_store.segmentation     | INFO  | Running KMeans with 6 clusters on 10,000 outlets...
+2026-06-27 19:09:42 | perfect_store.segmentation     | INFO  | Clustering complete. Distribution:
+2026-06-27 19:09:42 | perfect_store.segmentation     | INFO  |   Cluster 0: 1,536 outlets (15.4%)
+2026-06-27 19:09:42 | perfect_store.segmentation     | INFO  |   Cluster 1: 3,037 outlets (30.4%)
+2026-06-27 19:09:42 | perfect_store.segmentation     | INFO  |   Cluster 2: 5,088 outlets (50.9%)
+2026-06-27 19:09:42 | perfect_store.segmentation     | INFO  |   Cluster 3: 15 outlets (0.1%)
+2026-06-27 19:09:42 | perfect_store.segmentation     | INFO  |   Cluster 4: 282 outlets (2.8%)
+2026-06-27 19:09:42 | perfect_store.segmentation     | INFO  |   Cluster 5: 42 outlets (0.4%)
+2026-06-27 19:09:42 | perfect_store.segmentation     | INFO  | Building cluster profiles...
+2026-06-27 19:09:42 | perfect_store.segmentation     | INFO  | Requesting LLM segment labels...
+2026-06-27 19:09:42 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-27 19:09:42 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-27 19:09:57 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-27 19:09:57 | perfect_store.segmentation     | INFO  | Segment labels received from LLM.
+2026-06-27 19:09:57 | perfect_store.segmentation     | INFO  | Requesting LLM rich per-segment summaries (parallel)...
+2026-06-27 19:09:57 | perfect_store.segmentation     | INFO  | Generating rich summary for Cluster 0...
+2026-06-27 19:09:57 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-27 19:09:57 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-27 19:10:02 | perfect_store.segmentation     | INFO  | Generating rich summary for Cluster 1...
+2026-06-27 19:10:02 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-27 19:10:02 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-27 19:10:07 | perfect_store.segmentation     | INFO  | Generating rich summary for Cluster 2...
+2026-06-27 19:10:07 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-27 19:10:07 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-27 19:10:22 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-27 19:10:22 | perfect_store.segmentation     | INFO  | Generating rich summary for Cluster 3...
+2026-06-27 19:10:22 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-27 19:10:22 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-27 19:10:24 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-27 19:10:24 | perfect_store.segmentation     | INFO  | Generating rich summary for Cluster 4...
+2026-06-27 19:10:24 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-27 19:10:24 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-27 19:10:30 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-27 19:10:30 | perfect_store.segmentation     | INFO  | Generating rich summary for Cluster 5...
+2026-06-27 19:10:30 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-27 19:10:30 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-27 19:10:42 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-27 19:10:48 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-27 19:10:53 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-27 19:10:53 | perfect_store.pipeline         | INFO  | Segmentation complete: 6 segments across 10,000 outlets
+2026-06-27 19:10:53 | perfect_store.pipeline         | INFO  |   Cluster 0 (1,536 outlets): Urban Kirana Cold Beverage & Premium Impulse
+2026-06-27 19:10:53 | perfect_store.pipeline         | INFO  |   Cluster 1 (3,037 outlets): Rural Kirana Everyday Essential Affordability
+2026-06-27 19:10:53 | perfect_store.pipeline         | INFO  |   Cluster 2 (5,088 outlets): Urban Kirana Basic Needs & Value Focus
+2026-06-27 19:10:53 | perfect_store.pipeline         | INFO  |   Cluster 3 (15 outlets): Metro High Footfall Office Corridor GT
+2026-06-27 19:10:53 | perfect_store.pipeline         | INFO  |   Cluster 4 (282 outlets): Urban Modern Trade Premium Stock-up
+2026-06-27 19:10:53 | perfect_store.pipeline         | INFO  |   Cluster 5 (42 outlets): High-Value Urban Kirana Mixed Mission
+2026-06-27 19:10:53 | perfect_store.pipeline         | INFO  | Step 5/7 — MSL Generation
+2026-06-27 19:10:53 | perfect_store.msl              | INFO  | [MSL] Generating sheets for buckets: ['A', 'B', 'C', 'D']
+2026-06-27 19:10:54 | perfect_store.msl              | INFO  | [MSL] Workbook saved: /home/burmaburma1010/mode/outputs/20260627_190909/MSL_Priority_Buckets_20260627_191054.xlsx
+2026-06-27 19:10:54 | perfect_store.pipeline         | INFO  | MSL workbook saved: /home/burmaburma1010/mode/outputs/20260627_190909/MSL_Priority_Buckets_20260627_191054.xlsx
+2026-06-27 19:10:54 | perfect_store.pipeline         | INFO  | Step 6/7 — Generating outputs
+2026-06-27 19:10:54 | perfect_store.output           | INFO  | Wrote combined CSV: /home/burmaburma1010/mode/outputs/20260627_190909/all_segments_20260627_191054.csv
+2026-06-27 19:10:55 | perfect_store.output           | INFO  | Wrote 6 segment CSVs
+2026-06-27 19:10:55 | matplotlib.font_manager        | INFO  | generated new fontManager
+2026-06-27 19:11:03 | perfect_store.output           | INFO  | Wrote Excel workbook: /home/burmaburma1010/mode/outputs/20260627_190909/segment_report_20260627_191055.xlsx
+2026-06-27 19:11:05 | perfect_store.output           | INFO  | Wrote priority workbook: /home/burmaburma1010/mode/outputs/20260627_190909/priority_report_20260627_191103.xlsx
+2026-06-27 19:11:05 | perfect_store.output           | INFO  | Wrote PDF report: /home/burmaburma1010/mode/outputs/20260627_190909/perfect_store_report_20260627_191105.pdf
+2026-06-27 19:11:05 | perfect_store.pipeline         | INFO  | Step 7/7 — Space Allocation
+2026-06-27 19:11:05 | perfect_store.space_allocation | INFO  | === Space Allocation Agent starting ===
+2026-06-27 19:11:05 | perfect_store.space_allocation | INFO  | Racks loaded: ['Wire Rack', 'Counter Top Display']
+2026-06-27 19:11:05 | perfect_store.space_allocation | INFO  | Pack dimension rows loaded: 18
+2026-06-27 19:11:05 | perfect_store.space_allocation | INFO  | MSL file : /home/burmaburma1010/mode/outputs/20260627_190909/MSL_Priority_Buckets_20260627_191054.xlsx
+2026-06-27 19:11:05 | perfect_store.space_allocation | INFO  | Primary rack : Wire Rack  (1600 H × 584 W × 330 D mm, 5 shelves)
+2026-06-27 19:11:05 | perfect_store.space_allocation | INFO  | 
+── Bucket A ──────────────────────────────────
+2026-06-27 19:11:05 | perfect_store.space_allocation | INFO  |   SKUs to allocate : 15
+2026-06-27 19:11:05 | perfect_store.space_allocation | INFO  |   Assets needed    : 1 × Wire Rack
+2026-06-27 19:11:05 | perfect_store.space_allocation | INFO  |   Revenue coverage : 49.6%
+2026-06-27 19:11:05 | perfect_store.space_allocation | INFO  |   Placed / overflow: 15 / 0
+2026-06-27 19:11:05 | perfect_store.space_allocation | INFO  |   Requesting LLM recommendation...
+2026-06-27 19:11:05 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-27 19:11:05 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-27 19:11:24 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-27 19:11:24 | perfect_store.space_allocation | INFO  | 
+── Bucket B ──────────────────────────────────
+2026-06-27 19:11:24 | perfect_store.space_allocation | INFO  |   SKUs to allocate : 15
+2026-06-27 19:11:24 | perfect_store.space_allocation | INFO  |   Assets needed    : 1 × Wire Rack
+2026-06-27 19:11:24 | perfect_store.space_allocation | INFO  |   Revenue coverage : 49.9%
+2026-06-27 19:11:24 | perfect_store.space_allocation | INFO  |   Placed / overflow: 15 / 0
+2026-06-27 19:11:24 | perfect_store.space_allocation | INFO  |   Requesting LLM recommendation...
+2026-06-27 19:11:24 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-27 19:11:24 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-27 19:11:42 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-27 19:11:42 | perfect_store.space_allocation | INFO  | 
+── Bucket C ──────────────────────────────────
+2026-06-27 19:11:42 | perfect_store.space_allocation | INFO  |   SKUs to allocate : 15
+2026-06-27 19:11:42 | perfect_store.space_allocation | INFO  |   Assets needed    : 1 × Wire Rack
+2026-06-27 19:11:42 | perfect_store.space_allocation | INFO  |   Revenue coverage : 50.0%
+2026-06-27 19:11:42 | perfect_store.space_allocation | INFO  |   Placed / overflow: 15 / 0
+2026-06-27 19:11:42 | perfect_store.space_allocation | INFO  |   Requesting LLM recommendation...
+2026-06-27 19:11:42 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-27 19:11:42 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-27 19:12:02 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-27 19:12:02 | perfect_store.space_allocation | INFO  | 
+── Bucket D ──────────────────────────────────
+2026-06-27 19:12:03 | perfect_store.space_allocation | INFO  |   SKUs to allocate : 14
+2026-06-27 19:12:03 | perfect_store.space_allocation | INFO  |   Assets needed    : 1 × Wire Rack
+2026-06-27 19:12:03 | perfect_store.space_allocation | INFO  |   Revenue coverage : 47.5%
+2026-06-27 19:12:03 | perfect_store.space_allocation | INFO  |   Placed / overflow: 14 / 0
+2026-06-27 19:12:03 | perfect_store.space_allocation | INFO  |   Requesting LLM recommendation...
+2026-06-27 19:12:03 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-27 19:12:03 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-27 19:12:18 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-27 19:12:18 | perfect_store.space_allocation | INFO  | Space allocation output written: /home/burmaburma1010/mode/outputs/20260627_190909/Space_Allocation_20260627_191218.xlsx
+2026-06-27 19:12:18 | perfect_store.space_allocation | INFO  | 
+=== Space allocation complete → /home/burmaburma1010/mode/outputs/20260627_190909/Space_Allocation_20260627_191218.xlsx ===
+2026-06-27 19:12:18 | perfect_store.pipeline         | INFO  | Space allocation workbook: /home/burmaburma1010/mode/outputs/20260627_190909/Space_Allocation_20260627_191218.xlsx
+2026-06-27 19:12:18 | perfect_store.pipeline         | INFO  | =================================================================
+2026-06-27 19:12:18 | perfect_store.pipeline         | INFO  | Pipeline complete!
+2026-06-27 19:12:18 | perfect_store.pipeline         | INFO  |   Segment CSVs      : 7 files
+2026-06-27 19:12:18 | perfect_store.pipeline         | INFO  |   Excel report      : /home/burmaburma1010/mode/outputs/20260627_190909/segment_report_20260627_191055.xlsx
+2026-06-27 19:12:18 | perfect_store.pipeline         | INFO  |   Priority Excel    : /home/burmaburma1010/mode/outputs/20260627_190909/priority_report_20260627_191103.xlsx
+2026-06-27 19:12:18 | perfect_store.pipeline         | INFO  |   MSL workbook      : /home/burmaburma1010/mode/outputs/20260627_190909/MSL_Priority_Buckets_20260627_191054.xlsx
+2026-06-27 19:12:18 | perfect_store.pipeline         | INFO  |   Space allocation  : /home/burmaburma1010/mode/outputs/20260627_190909/Space_Allocation_20260627_191218.xlsx
+2026-06-27 19:12:18 | perfect_store.pipeline         | INFO  |   PDF report        : /home/burmaburma1010/mode/outputs/20260627_190909/perfect_store_report_20260627_191105.pdf
+2026-06-27 19:12:18 | perfect_store.pipeline         | INFO  | =================================================================
+2026-06-28 07:50:22 | perfect_store.pipeline         | INFO  | =================================================================
+2026-06-28 07:50:22 | perfect_store.pipeline         | INFO  | Perfect Store Pipeline | run_id: Market_Master_File_20260628_075022
+2026-06-28 07:50:22 | perfect_store.pipeline         | INFO  | File      : inbox/Market_Master_File.csv
+2026-06-28 07:50:22 | perfect_store.pipeline         | INFO  | Data mode : flat_outlet
+2026-06-28 07:50:22 | perfect_store.pipeline         | INFO  | LLM backend : vertex  |  model: gemini-2.5-flash
+2026-06-28 07:50:22 | perfect_store.pipeline         | INFO  | =================================================================
+2026-06-28 07:50:22 | perfect_store.pipeline         | INFO  | Step 1/7 — Loading data
+2026-06-28 07:50:22 | perfect_store.pipeline         | INFO  | Loading Market_Master_File.csv ...
+2026-06-28 07:50:22 | perfect_store.pipeline         | INFO  | File has ~10,000 rows
+2026-06-28 07:50:22 | perfect_store.pipeline         | INFO  |   Loaded 10,000 rows...
+2026-06-28 07:50:22 | perfect_store.pipeline         | INFO  | Loaded 10,000 rows × 121 columns
+2026-06-28 07:50:22 | perfect_store.pipeline         | INFO  | Step 2/7 — Running DQ checks
+2026-06-28 07:50:22 | perfect_store.pipeline         | INFO  | DQ: 5/7 checks passed
+2026-06-28 07:50:24 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-28 07:50:24 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-28 07:50:34 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-28 07:50:34 | perfect_store.pipeline         | INFO  | LLM DQ verdict: PASS
+2026-06-28 07:50:34 | perfect_store.pipeline         | INFO  | DQ report saved: /home/burmaburma1010/mode/logs/dq_report_Market_Master_File_20260628_075022.txt
+2026-06-28 07:50:34 | perfect_store.pipeline         | INFO  | Step 3/7 — Prioritization (A/B/C/D + opportunity gap)
+2026-06-28 07:50:34 | perfect_store.prioritization   | INFO  | =======================================================
+2026-06-28 07:50:34 | perfect_store.prioritization   | INFO  | Prioritization Agent starting
+2026-06-28 07:50:34 | perfect_store.prioritization   | INFO  |   Outlets: 10,000 | VPO column: VPO
+2026-06-28 07:50:34 | perfect_store.prioritization   | INFO  | =======================================================
+2026-06-28 07:50:34 | perfect_store.prioritization   | INFO  | Step 1/4 — Assigning A/B/C/D buckets
+2026-06-28 07:50:34 | perfect_store.prioritization   | INFO  | Bucket distribution:
+2026-06-28 07:50:34 | perfect_store.prioritization   | INFO  |   Bucket A: 2,000 outlets (20.0%)
+2026-06-28 07:50:34 | perfect_store.prioritization   | INFO  |   Bucket B: 2,000 outlets (20.0%)
+2026-06-28 07:50:34 | perfect_store.prioritization   | INFO  |   Bucket C: 3,000 outlets (30.0%)
+2026-06-28 07:50:34 | perfect_store.prioritization   | INFO  |   Bucket D: 3,000 outlets (30.0%)
+2026-06-28 07:50:34 | perfect_store.prioritization   | INFO  | Step 2/4 — Building potential features
+2026-06-28 07:50:34 | perfect_store.prioritization   | INFO  | Potential model using 22 features: ['nbrhd_per_capita_income', 'sec_a_hhs', 'sec_b_hhs', 'sec_c_hhs', 'sec_d_hhs', 'sec_e_hhs', 'distance_to_nearest_large_office_in_km', 'distance_to_nearest_malls', 'distance_to_nearest_bus_stn_in_km', 'distance_to_nearest_train_stn_in_km', 'distance_to_nearest_school_in_km', 'distance_to_nearest_commercial_place', 'no_of_schools_in_a_1_km_radius', 'no_of_colleges_in_a_1_km_radius', 'estmtd_daily_footfall_numeric', 'store_size', 'AVG_SKU', 'ACTIVE_MONTHS', 'cooler_available_bin', 'BI_bin', 'is_modern_trade', 'is_urban']
+2026-06-28 07:50:34 | perfect_store.prioritization   | INFO  | Step 3/4 — Fitting quantile regression (q=0.75)
+2026-06-28 07:50:37 | perfect_store.prioritization   | INFO  | Fitted sklearn QuantileRegressor (q=0.75)
+2026-06-28 07:50:37 | perfect_store.prioritization   | INFO  | Potential model — predicted VPO: min=0  mean=3,658  max=15,217  (q=0.75)
+2026-06-28 07:50:37 | perfect_store.prioritization   | INFO  | Step 4/4 — Computing opportunity gaps and plus tags
+2026-06-28 07:50:37 | perfect_store.prioritization   | INFO  | Priority distribution:
+2026-06-28 07:50:37 | perfect_store.prioritization   | INFO  |   A+ : 644 outlets | avg opportunity gap ₹1,592/month
+2026-06-28 07:50:37 | perfect_store.prioritization   | INFO  |   A  : 1,356 outlets | avg opportunity gap ₹-7,284/month
+2026-06-28 07:50:37 | perfect_store.prioritization   | INFO  |   B+ : 1,464 outlets | avg opportunity gap ₹1,789/month
+2026-06-28 07:50:37 | perfect_store.prioritization   | INFO  |   B  : 536 outlets | avg opportunity gap ₹-1,055/month
+2026-06-28 07:50:37 | perfect_store.prioritization   | INFO  |   C+ : 2,567 outlets | avg opportunity gap ₹1,589/month
+2026-06-28 07:50:37 | perfect_store.prioritization   | INFO  |   C  : 433 outlets | avg opportunity gap ₹-545/month
+2026-06-28 07:50:37 | perfect_store.prioritization   | INFO  |   D+ : 2,820 outlets | avg opportunity gap ₹1,316/month
+2026-06-28 07:50:37 | perfect_store.prioritization   | INFO  |   D  : 180 outlets | avg opportunity gap ₹-302/month
+2026-06-28 07:50:37 | perfect_store.prioritization   | INFO  | Requesting LLM priority narrative...
+2026-06-28 07:50:37 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-28 07:50:37 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-28 07:50:53 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-28 07:50:53 | perfect_store.pipeline         | INFO  | Priority distribution:
+2026-06-28 07:50:53 | perfect_store.pipeline         | INFO  |   A  : 1,356 outlets | avg gap ₹-7,284/month
+2026-06-28 07:50:53 | perfect_store.pipeline         | INFO  |   A+ : 644 outlets | avg gap ₹1,592/month
+2026-06-28 07:50:53 | perfect_store.pipeline         | INFO  |   B  : 536 outlets | avg gap ₹-1,055/month
+2026-06-28 07:50:53 | perfect_store.pipeline         | INFO  |   B+ : 1,464 outlets | avg gap ₹1,789/month
+2026-06-28 07:50:53 | perfect_store.pipeline         | INFO  |   C  : 433 outlets | avg gap ₹-545/month
+2026-06-28 07:50:53 | perfect_store.pipeline         | INFO  |   C+ : 2,567 outlets | avg gap ₹1,589/month
+2026-06-28 07:50:53 | perfect_store.pipeline         | INFO  |   D  : 180 outlets | avg gap ₹-302/month
+2026-06-28 07:50:53 | perfect_store.pipeline         | INFO  |   D+ : 2,820 outlets | avg gap ₹1,316/month
+2026-06-28 07:50:53 | perfect_store.pipeline         | INFO  | Priority narrative saved: /home/burmaburma1010/mode/logs/priority_narrative_Market_Master_File_20260628_075022.txt
+2026-06-28 07:50:53 | perfect_store.pipeline         | INFO  | Step 4/7 — Segmentation
+2026-06-28 07:50:53 | perfect_store.segmentation     | INFO  | Engineering features...
+2026-06-28 07:50:53 | perfect_store.segmentation     | INFO  | Priority bucket encoded as numeric feature (A=4, B=3, C=2, D=1)
+2026-06-28 07:50:53 | perfect_store.segmentation     | INFO  | Using 44 features for clustering: ['VPO', 'TOTAL_REVENUE', 'AVG_SKU', 'ACTIVE_MONTHS', 'store_size', 'nbrhd_per_capita_income', 'estmtd_daily_footfall_numeric', 'sec_a_hhs', 'sec_b_hhs', 'sec_c_hhs', 'sec_d_hhs', 'sec_e_hhs', 'no_of_schools_in_a_1_km_radius', 'no_of_colleges_in_a_1_km_radius', 'distance_to_nearest_school_in_km', 'distance_to_nearest_large_office_in_km', 'distance_to_nearest_bus_stn_in_km', 'distance_to_nearest_train_stn_in_km', 'distance_to_nearest_malls', 'nearest_pepsi_distributer_distance_in_km', 'priority_bucket_num', 'LAYS MEDIUM 10', 'KURKURE MEDIUM 10', 'KURKURE SMALL 5', 'LAYS SMALL 5', 'LAYS LARGE 20', 'KURKURE LARGE 20', 'UNCLE CHIPPS MEDIUM 10', 'cooler_available_num', 'chocolates_avlblty_num', 'biscuits_avlblty_num', 'noodles_avlblty_num', 'protein_bars_avlblty_num', 'oats_avlblty_num', 'premium_category_sold_num', 'premium_snacks_sold_num', 'BI_num', 'store_size_bracket_num', 'western_salty_lead_pack_num', 'chocolates_lead_pack_num', 'biscuits_lead_pack_num', 'is_modern_trade', 'is_urban', 'is_urban_sector']
+2026-06-28 07:50:53 | perfect_store.segmentation     | INFO  | Running KMeans with 6 clusters on 10,000 outlets...
+2026-06-28 07:50:53 | perfect_store.segmentation     | INFO  | Clustering complete. Distribution:
+2026-06-28 07:50:53 | perfect_store.segmentation     | INFO  |   Cluster 0: 1,536 outlets (15.4%)
+2026-06-28 07:50:53 | perfect_store.segmentation     | INFO  |   Cluster 1: 3,037 outlets (30.4%)
+2026-06-28 07:50:53 | perfect_store.segmentation     | INFO  |   Cluster 2: 5,088 outlets (50.9%)
+2026-06-28 07:50:53 | perfect_store.segmentation     | INFO  |   Cluster 3: 15 outlets (0.1%)
+2026-06-28 07:50:53 | perfect_store.segmentation     | INFO  |   Cluster 4: 282 outlets (2.8%)
+2026-06-28 07:50:53 | perfect_store.segmentation     | INFO  |   Cluster 5: 42 outlets (0.4%)
+2026-06-28 07:50:53 | perfect_store.segmentation     | INFO  | Building cluster profiles...
+2026-06-28 07:50:53 | perfect_store.segmentation     | INFO  | Requesting LLM segment labels...
+2026-06-28 07:50:53 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-28 07:50:53 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-28 07:51:08 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-28 07:51:08 | perfect_store.segmentation     | INFO  | Segment labels received from LLM.
+2026-06-28 07:51:08 | perfect_store.segmentation     | INFO  | Requesting LLM rich per-segment summaries (parallel)...
+2026-06-28 07:51:08 | perfect_store.segmentation     | INFO  | Generating rich summary for Cluster 0...
+2026-06-28 07:51:08 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-28 07:51:08 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-28 07:51:13 | perfect_store.segmentation     | INFO  | Generating rich summary for Cluster 1...
+2026-06-28 07:51:13 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-28 07:51:13 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-28 07:51:18 | perfect_store.segmentation     | INFO  | Generating rich summary for Cluster 2...
+2026-06-28 07:51:18 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-28 07:51:18 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-28 07:51:30 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-28 07:51:30 | perfect_store.segmentation     | INFO  | Generating rich summary for Cluster 3...
+2026-06-28 07:51:30 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-28 07:51:30 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-28 07:51:34 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-28 07:51:34 | perfect_store.segmentation     | INFO  | Generating rich summary for Cluster 4...
+2026-06-28 07:51:34 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-28 07:51:34 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-28 07:51:39 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-28 07:51:39 | perfect_store.segmentation     | INFO  | Generating rich summary for Cluster 5...
+2026-06-28 07:51:39 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-28 07:51:39 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-28 07:51:52 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-28 07:51:54 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-28 07:52:01 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-28 07:52:01 | perfect_store.pipeline         | INFO  | Segmentation complete: 6 segments across 10,000 outlets
+2026-06-28 07:52:01 | perfect_store.pipeline         | INFO  |   Cluster 0 (1,536 outlets): Urban Mid-Tier GT Impulse & Refreshment Hub
+2026-06-28 07:52:01 | perfect_store.pipeline         | INFO  |   Cluster 1 (3,037 outlets): Rural Periphery Entry-Tier Kirana
+2026-06-28 07:52:01 | perfect_store.pipeline         | INFO  |   Cluster 2 (5,088 outlets): Urban Value-Driven GT Kirana & Kiosk
+2026-06-28 07:52:01 | perfect_store.pipeline         | INFO  |   Cluster 3 (15 outlets): High-Footfall Urban GT Office Corridor
+2026-06-28 07:52:01 | perfect_store.pipeline         | INFO  |   Cluster 4 (282 outlets): Urban Modern Trade Premium Stock-up
+2026-06-28 07:52:01 | perfect_store.pipeline         | INFO  |   Cluster 5 (42 outlets): High-Value GT Urban Flagship Outlets
+2026-06-28 07:52:01 | perfect_store.pipeline         | INFO  | Step 5/7 — MSL Generation
+2026-06-28 07:52:01 | perfect_store.msl              | INFO  | [MSL] Generating sheets for buckets: ['A', 'B', 'C', 'D']
+2026-06-28 07:52:02 | perfect_store.msl              | INFO  | [MSL] Workbook saved: /home/burmaburma1010/mode/outputs/20260628_075022/MSL_Priority_Buckets_20260628_075202.xlsx
+2026-06-28 07:52:02 | perfect_store.pipeline         | INFO  | MSL workbook saved: /home/burmaburma1010/mode/outputs/20260628_075022/MSL_Priority_Buckets_20260628_075202.xlsx
+2026-06-28 07:52:02 | perfect_store.pipeline         | INFO  | Step 6/7 — Generating outputs
+2026-06-28 07:52:03 | perfect_store.output           | INFO  | Wrote combined CSV: /home/burmaburma1010/mode/outputs/20260628_075022/all_segments_20260628_075202.csv
+2026-06-28 07:52:03 | perfect_store.output           | INFO  | Wrote 6 segment CSVs
+2026-06-28 07:52:12 | perfect_store.output           | INFO  | Wrote Excel workbook: /home/burmaburma1010/mode/outputs/20260628_075022/segment_report_20260628_075203.xlsx
+2026-06-28 07:52:13 | perfect_store.output           | INFO  | Wrote priority workbook: /home/burmaburma1010/mode/outputs/20260628_075022/priority_report_20260628_075212.xlsx
+2026-06-28 07:52:13 | perfect_store.output           | INFO  | Wrote PDF report: /home/burmaburma1010/mode/outputs/20260628_075022/perfect_store_report_20260628_075213.pdf
+2026-06-28 07:52:13 | perfect_store.pipeline         | INFO  | Step 7/7 — Space Allocation
+2026-06-28 07:52:13 | perfect_store.space_allocation | INFO  | === Space Allocation Agent starting ===
+2026-06-28 07:52:13 | perfect_store.space_allocation | INFO  | Racks loaded: ['Wire Rack', 'Counter Top Display']
+2026-06-28 07:52:13 | perfect_store.space_allocation | INFO  | Pack dimension rows loaded: 18
+2026-06-28 07:52:13 | perfect_store.space_allocation | INFO  | MSL file : /home/burmaburma1010/mode/outputs/20260628_075022/MSL_Priority_Buckets_20260628_075202.xlsx
+2026-06-28 07:52:13 | perfect_store.space_allocation | INFO  | Primary rack : Wire Rack  (1600 H × 584 W × 330 D mm, 5 shelves)
+2026-06-28 07:52:13 | perfect_store.space_allocation | INFO  | 
+── Bucket A ──────────────────────────────────
+2026-06-28 07:52:13 | perfect_store.space_allocation | INFO  |   SKUs to allocate : 15
+2026-06-28 07:52:13 | perfect_store.space_allocation | INFO  |   Assets needed    : 1 × Wire Rack
+2026-06-28 07:52:13 | perfect_store.space_allocation | INFO  |   Revenue coverage : 49.6%
+2026-06-28 07:52:13 | perfect_store.space_allocation | INFO  |   Placed / overflow: 15 / 0
+2026-06-28 07:52:13 | perfect_store.space_allocation | INFO  |   Requesting LLM recommendation...
+2026-06-28 07:52:13 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-28 07:52:13 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-28 07:52:32 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-28 07:52:32 | perfect_store.space_allocation | INFO  | 
+── Bucket B ──────────────────────────────────
+2026-06-28 07:52:32 | perfect_store.space_allocation | INFO  |   SKUs to allocate : 15
+2026-06-28 07:52:32 | perfect_store.space_allocation | INFO  |   Assets needed    : 1 × Wire Rack
+2026-06-28 07:52:32 | perfect_store.space_allocation | INFO  |   Revenue coverage : 49.9%
+2026-06-28 07:52:32 | perfect_store.space_allocation | INFO  |   Placed / overflow: 15 / 0
+2026-06-28 07:52:32 | perfect_store.space_allocation | INFO  |   Requesting LLM recommendation...
+2026-06-28 07:52:32 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-28 07:52:32 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-28 07:52:51 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-28 07:52:51 | perfect_store.space_allocation | INFO  | 
+── Bucket C ──────────────────────────────────
+2026-06-28 07:52:51 | perfect_store.space_allocation | INFO  |   SKUs to allocate : 15
+2026-06-28 07:52:51 | perfect_store.space_allocation | INFO  |   Assets needed    : 1 × Wire Rack
+2026-06-28 07:52:51 | perfect_store.space_allocation | INFO  |   Revenue coverage : 50.0%
+2026-06-28 07:52:51 | perfect_store.space_allocation | INFO  |   Placed / overflow: 15 / 0
+2026-06-28 07:52:51 | perfect_store.space_allocation | INFO  |   Requesting LLM recommendation...
+2026-06-28 07:52:51 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-28 07:52:52 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-28 07:53:08 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-28 07:53:08 | perfect_store.space_allocation | INFO  | 
+── Bucket D ──────────────────────────────────
+2026-06-28 07:53:08 | perfect_store.space_allocation | INFO  |   SKUs to allocate : 14
+2026-06-28 07:53:08 | perfect_store.space_allocation | INFO  |   Assets needed    : 1 × Wire Rack
+2026-06-28 07:53:08 | perfect_store.space_allocation | INFO  |   Revenue coverage : 47.5%
+2026-06-28 07:53:08 | perfect_store.space_allocation | INFO  |   Placed / overflow: 14 / 0
+2026-06-28 07:53:08 | perfect_store.space_allocation | INFO  |   Requesting LLM recommendation...
+2026-06-28 07:53:08 | perfect_store.llm_client       | INFO  | Vertex AI (Gemini) call — model=gemini-2.5-flash  project=proj-psdesign-500716  location=us-central1
+2026-06-28 07:53:08 | google_genai.models            | INFO  | AFC is enabled with max remote calls: 10.
+2026-06-28 07:53:28 | httpx                          | INFO  | HTTP Request: POST https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj-psdesign-500716/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-28 07:53:28 | perfect_store.space_allocation | INFO  | Space allocation output written: /home/burmaburma1010/mode/outputs/20260628_075022/Space_Allocation_20260628_075328.xlsx
+2026-06-28 07:53:28 | perfect_store.space_allocation | INFO  | 
+=== Space allocation complete → /home/burmaburma1010/mode/outputs/20260628_075022/Space_Allocation_20260628_075328.xlsx ===
+2026-06-28 07:53:28 | perfect_store.pipeline         | INFO  | Space allocation workbook: /home/burmaburma1010/mode/outputs/20260628_075022/Space_Allocation_20260628_075328.xlsx
+2026-06-28 07:53:28 | perfect_store.pipeline         | INFO  | =================================================================
+2026-06-28 07:53:28 | perfect_store.pipeline         | INFO  | Pipeline complete!
+2026-06-28 07:53:28 | perfect_store.pipeline         | INFO  |   Segment CSVs      : 7 files
+2026-06-28 07:53:28 | perfect_store.pipeline         | INFO  |   Excel report      : /home/burmaburma1010/mode/outputs/20260628_075022/segment_report_20260628_075203.xlsx
+2026-06-28 07:53:28 | perfect_store.pipeline         | INFO  |   Priority Excel    : /home/burmaburma1010/mode/outputs/20260628_075022/priority_report_20260628_075212.xlsx
+2026-06-28 07:53:28 | perfect_store.pipeline         | INFO  |   MSL workbook      : /home/burmaburma1010/mode/outputs/20260628_075022/MSL_Priority_Buckets_20260628_075202.xlsx
+2026-06-28 07:53:28 | perfect_store.pipeline         | INFO  |   Space allocation  : /home/burmaburma1010/mode/outputs/20260628_075022/Space_Allocation_20260628_075328.xlsx
+2026-06-28 07:53:28 | perfect_store.pipeline         | INFO  |   PDF report        : /home/burmaburma1010/mode/outputs/20260628_075022/perfect_store_report_20260628_075213.pdf
+2026-06-28 07:53:28 | perfect_store.pipeline         | INFO  | =================================================================
