@@ -373,7 +373,7 @@ def _call_gemini(prompt: str, max_tokens: int, system_prompt: str = None) -> str
     if not api_key:
         raise ValueError("GEMINI_API_KEY env var is required for LLM_BACKEND=gemini")
 
-    preferred_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    preferred_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     client = genai.Client(api_key=api_key)
 
     # Resolve the model once — probes availability and falls back to
@@ -450,7 +450,7 @@ def _call_vertex(prompt: str, max_tokens: int, system_prompt: str = None) -> str
     if not project:
         raise ValueError("VERTEX_PROJECT env var is required for LLM_BACKEND=vertex")
 
-    model_name = os.getenv("VERTEX_MODEL", "claude-opus-4-6")
+    model_name = os.getenv("VERTEX_MODEL", "gemini-2.5-flash")
 
     if model_name.startswith("claude"):
         return _call_vertex_claude(prompt, max_tokens, system_prompt, project, model_name)
@@ -510,14 +510,14 @@ def _call_vertex_claude(prompt: str, max_tokens: int, system_prompt: str,
 
 def _call_vertex_gemini(prompt: str, max_tokens: int, system_prompt: str,
                         project: str, model_name: str) -> str:
-    """Call a Gemini model on Vertex AI (original behaviour)."""
+    """Call a Gemini model on Vertex AI via the google-genai SDK."""
     try:
-        import vertexai
-        from vertexai.generative_models import GenerativeModel, GenerationConfig
+        from google import genai
+        from google.genai import types
     except ImportError:
         raise ImportError(
-            "The 'google-cloud-aiplatform' package is required for Gemini on Vertex AI.\n"
-            "Install it with:  pip install google-cloud-aiplatform"
+            "The 'google-genai' package is required for Gemini on Vertex AI.\n"
+            "Install it with:  pip install google-genai"
         )
 
     location = os.getenv("VERTEX_LOCATION", "us-central1")
@@ -526,18 +526,47 @@ def _call_vertex_gemini(prompt: str, max_tokens: int, system_prompt: str,
         f"project={project}  location={location}"
     )
 
-    vertexai.init(project=project, location=location)
+    client = genai.Client(vertexai=True, project=project, location=location)
 
-    init_kwargs = {}
+    # Thinking models (gemini-2.5+) need an explicit budget so thinking tokens
+    # don't silently consume the entire max_output_tokens quota.
+    thinking_config = None
+    total_tokens = max_tokens
+    if "2.5" in model_name or "3." in model_name:
+        thinking_budget = 2048
+        total_tokens = max_tokens + thinking_budget
+        thinking_config = types.ThinkingConfig(thinking_budget=thinking_budget)
+
+    config_kwargs = dict(
+        max_output_tokens=total_tokens,
+        temperature=0.3,
+        thinking_config=thinking_config,
+    )
     if system_prompt:
-        init_kwargs["system_instruction"] = system_prompt
+        config_kwargs["system_instruction"] = system_prompt
 
-    mdl = GenerativeModel(model_name, **init_kwargs)
-    response = mdl.generate_content(
-        prompt,
-        generation_config=GenerationConfig(max_output_tokens=max_tokens, temperature=0.3),
+    response = client.models.generate_content(
+        model=model_name,
+        contents=prompt,
+        config=types.GenerateContentConfig(**config_kwargs),
     )
 
     text = response.text
+    if text is None:
+        parts = []
+        for candidate in (response.candidates or []):
+            content = getattr(candidate, "content", None)
+            for part in (content.parts or [] if content else []):
+                if getattr(part, "thought", False):
+                    continue
+                if part.text:
+                    parts.append(part.text)
+        text = "\n".join(parts)
+
+    if not text:
+        finish = (response.candidates[0].finish_reason
+                  if response.candidates else "unknown")
+        raise ValueError(f"Vertex AI Gemini returned an empty response (finish_reason={finish})")
+
     logger.debug(f"Vertex AI (Gemini) call complete — {len(text)} chars returned")
     return text
