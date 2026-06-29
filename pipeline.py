@@ -239,10 +239,10 @@ def run_pipeline(file_path: str, project_root: str = None,
         model = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
     elif llm_backend == "gemini":
         api_key = os.getenv("GEMINI_API_KEY")
-        model = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
+        model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     elif llm_backend == "vertex":
         api_key = None
-        model = os.getenv("VERTEX_MODEL", "gemini-1.5-pro")
+        model = os.getenv("VERTEX_MODEL", "gemini-2.5-flash")
     elif llm_backend == "local":
         api_key = None
         model = local_model
@@ -309,6 +309,20 @@ def run_pipeline(file_path: str, project_root: str = None,
     with open(dq_log, "w", encoding="utf-8") as f:
         f.write(dq_report)
     logger.info(f"DQ report saved: {dq_log}")
+
+    # Gate: halt on DQ FAIL if DQ_HALT_ON_FAIL=1 (default: warn and continue).
+    # Prevents silent propagation of bad data through prioritization/segmentation.
+    if not dq_passed:
+        logger.warning(
+            "DQ verdict: FAIL — data quality issues detected. "
+            "Set DQ_HALT_ON_FAIL=1 in .env to abort on failure."
+        )
+        if os.getenv("DQ_HALT_ON_FAIL", "0").strip() == "1":
+            raise RuntimeError(
+                f"Pipeline halted: DQ verdict FAIL (run_id={run_id}).\n"
+                f"Review {dq_log} for details. "
+                f"Set DQ_HALT_ON_FAIL=0 to continue with caveats."
+            )
 
     # Build a compact DQ context string — passed to every downstream LLM call
     # so agents can reference data-quality caveats in their narratives.

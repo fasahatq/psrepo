@@ -42,6 +42,51 @@ import logging
 logger = logging.getLogger("perfect_store.llm_client")
 
 
+# ── Disk-level LLM response cache ─────────────────────────────────────────────
+# Caches full LLM responses keyed by (backend, model, max_tokens, system_prompt,
+# prompt) hash.  Eliminates cost/latency for identical re-runs (e.g. reruns after
+# a downstream step fails).
+#
+# Config env vars:
+#   LLM_CACHE_ENABLED   — "1" (default) to enable, "0" to disable
+#   LLM_CACHE_DIR       — path for cache files (default: ~/.perfect_store_llm_cache)
+#   LLM_CACHE_TTL_SECS  — TTL in seconds (default: 604800 = 7 days)
+
+_llm_disk_cache = None
+_llm_disk_cache_lock = threading.Lock()
+
+
+def _get_llm_disk_cache():
+    global _llm_disk_cache
+    if _llm_disk_cache is not None:
+        return _llm_disk_cache
+    with _llm_disk_cache_lock:
+        if _llm_disk_cache is not None:
+            return _llm_disk_cache
+        if os.getenv("LLM_CACHE_ENABLED", "1").strip() != "1":
+            return None
+        try:
+            import diskcache
+            cache_dir = os.getenv(
+                "LLM_CACHE_DIR",
+                os.path.expanduser("~/.perfect_store_llm_cache"),
+            )
+            _llm_disk_cache = diskcache.Cache(cache_dir)
+            logger.info(f"LLM disk cache active — dir={cache_dir}")
+        except ImportError:
+            logger.warning(
+                "diskcache not installed — cross-run LLM cache disabled. "
+                "Install with: pip install diskcache"
+            )
+        return _llm_disk_cache
+
+
+def _llm_disk_cache_key(backend: str, model: str, max_tokens: int,
+                         system_prompt: str, prompt: str) -> str:
+    raw = f"{backend}|{model}|{max_tokens}|{system_prompt or ''}|{prompt}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 # ── Gemini model resolution ──────────────────────────────────────────────────
 # If the configured model is unavailable (quota exhausted, not yet GA, region
 # restrictions, etc.) we walk down this chain and use the first accessible one.
@@ -201,18 +246,32 @@ def call_llm(prompt: str, api_key: str, model: str,
     max_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
     base_delay  = float(os.getenv("LLM_RETRY_BASE_DELAY", "5"))
 
+    # ── Disk cache check (before any network call) ─────────────────────────
+    disk_cache = _get_llm_disk_cache()
+    cache_key  = None
+    if disk_cache is not None:
+        cache_key = _llm_disk_cache_key(
+            backend, model or "", max_tokens, system_prompt, prompt
+        )
+        cached = disk_cache.get(cache_key)
+        if cached is not None:
+            logger.debug("LLM disk cache HIT — returning cached response")
+            return cached
+
+    result = None
     for attempt in range(max_retries + 1):
         try:
             if backend == "local":
-                return _call_local(prompt, max_tokens, system_prompt)
+                result = _call_local(prompt, max_tokens, system_prompt)
             elif backend == "azure":
-                return _call_azure_openai(prompt, max_tokens, system_prompt)
+                result = _call_azure_openai(prompt, max_tokens, system_prompt)
             elif backend == "gemini":
-                return _call_gemini(prompt, max_tokens, system_prompt)
+                result = _call_gemini(prompt, max_tokens, system_prompt)
             elif backend == "vertex":
-                return _call_vertex(prompt, max_tokens, system_prompt)
+                result = _call_vertex(prompt, max_tokens, system_prompt)
             else:
-                return _call_anthropic(prompt, api_key, model, max_tokens, system_prompt)
+                result = _call_anthropic(prompt, api_key, model, max_tokens, system_prompt)
+            break   # success — exit retry loop
 
         except Exception as exc:
             is_last = attempt >= max_retries
@@ -225,6 +284,14 @@ def call_llm(prompt: str, api_key: str, model: str,
                 time.sleep(delay)
             else:
                 raise   # permanent error or retries exhausted — bubble up
+
+    # ── Store successful response in disk cache ────────────────────────────
+    if disk_cache is not None and result is not None and cache_key is not None:
+        ttl = int(os.getenv("LLM_CACHE_TTL_SECS", str(7 * 24 * 3600)))
+        disk_cache.set(cache_key, result, expire=ttl)
+        logger.debug("LLM disk cache SET")
+
+    return result
 
 
 # ── Anthropic (cloud) ────────────────────────────────────────────────────────
@@ -543,7 +610,13 @@ def _call_vertex_gemini(prompt: str, max_tokens: int, system_prompt: str,
         thinking_config=thinking_config,
     )
     if system_prompt:
-        config_kwargs["system_instruction"] = system_prompt
+        # Use server-side context caching (same path as _call_gemini) to avoid
+        # re-tokenising the full system prompt on every call within a run.
+        cache_name = _get_or_create_gemini_cache(client, model_name, system_prompt)
+        if cache_name:
+            config_kwargs["cached_content"] = cache_name
+        else:
+            config_kwargs["system_instruction"] = system_prompt
 
     response = client.models.generate_content(
         model=model_name,

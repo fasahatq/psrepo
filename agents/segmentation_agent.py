@@ -742,7 +742,10 @@ def generate_rich_segment_summaries(
     import time as _time
 
     max_workers  = int(os.getenv("SEGMENT_SUMMARY_MAX_WORKERS", "3"))
-    stagger_secs = float(os.getenv("SEGMENT_SUMMARY_STAGGER_SECS", "5"))
+    # Default stagger is 0 — ThreadPoolExecutor max_workers already caps
+    # concurrency, so pre-submission sleeping only wastes wall time.
+    # Set SEGMENT_SUMMARY_STAGGER_SECS > 0 to re-enable if rate-limit errors appear.
+    stagger_secs = float(os.getenv("SEGMENT_SUMMARY_STAGGER_SECS", "0"))
     max_workers  = min(max_workers, len(profiles))
 
     results: dict = {}
@@ -762,10 +765,10 @@ def generate_rich_segment_summaries(
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {}
         for i, p in enumerate(profiles):
-            if i > 0 and stagger_secs > 0:
-                _time.sleep(stagger_secs)   # spread token usage over time
-            future = executor.submit(_gen_one, p)
+            future = executor.submit(_gen_one, p)   # submit first — task starts immediately
             futures[future] = p["cluster_id"]
+            if i < len(profiles) - 1 and stagger_secs > 0:
+                _time.sleep(stagger_secs)   # post-submit stagger for rate-limit safety
 
         for future in as_completed(futures):
             cid = futures[future]

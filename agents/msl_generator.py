@@ -45,6 +45,23 @@ SKU_CSV      = os.path.join(PROJECT_ROOT, "inbox", "India_Synthetic_SKU_Data.csv
 # Outlet master used to resolve IDs when the segmentation file lacks metadata
 MARKET_MASTER_CSV = os.path.join(PROJECT_ROOT, "inbox", "Market_Master_File.csv")
 
+# Module-level ContextLoader — shared across all per-bucket LLM calls so
+# context files are read from disk exactly once per process, not once per bucket.
+_ctx = None
+
+def _get_msl_ctx():
+    """Lazily initialise and return the module-level ContextLoader."""
+    global _ctx
+    if _ctx is None:
+        import sys as _sys
+        _sys.path.insert(0, PROJECT_ROOT)
+        try:
+            from agents.context_loader import ContextLoader
+            _ctx = ContextLoader()
+        except ImportError:
+            pass
+    return _ctx
+
 # Top-N thresholds for cumulative business contribution summary
 TOP_N_THRESHOLDS = [20, 35, 50]
 
@@ -338,9 +355,8 @@ def llm_msl_selection(bucket_name: str, product_list: list,
     _sys.path.insert(0, PROJECT_ROOT)
     try:
         from agents.llm_client import call_llm
-        from agents.context_loader import ContextLoader
     except ImportError:
-        print("[MSL] llm_client/context_loader not importable — using data-driven fallback")
+        print("[MSL] llm_client not importable — using data-driven fallback")
         _fallback_msl_selection(product_list)
         return product_list
 
@@ -392,8 +408,8 @@ Rules:
 - Include ALL {min(len(product_list), 60)} product ranks in the table (even if blank)
 """
 
-    ctx = ContextLoader()
-    system_prompt = ctx.build("msl")
+    ctx = _get_msl_ctx()
+    system_prompt = ctx.build("msl") if ctx else ""
 
     try:
         response = call_llm(prompt, api_key, model, max_tokens=3000,
