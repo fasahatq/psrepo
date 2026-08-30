@@ -41,11 +41,14 @@ def run_label(run_dir: Path) -> str:
 
 def scan_artifacts(run_dir: Path) -> dict:
     run_dir = Path(run_dir)
-    pdfs = sorted(run_dir.glob("*.pdf"))
-    xlsx = sorted(run_dir.glob("*.xlsx"))
-    csvs = sorted(run_dir.glob("*.csv"))
-    charts = sorted((run_dir / "charts").glob("*.png")) if (run_dir / "charts").is_dir() else []
-    return {"pdf": pdfs, "excel": xlsx, "csv": csvs, "charts": charts}
+    return {
+        "pptx": sorted(run_dir.glob("*.pptx")),
+        "pdf": sorted(run_dir.glob("*.pdf")),
+        "excel": sorted(run_dir.glob("*.xlsx")),
+        "csv": sorted(run_dir.glob("*.csv")),
+        "charts": sorted((run_dir / "charts").glob("*.png"))
+        if (run_dir / "charts").is_dir() else [],
+    }
 
 
 # ── individual renderers ─────────────────────────────────────────────────────
@@ -62,6 +65,32 @@ def _render_pdf(path: Path) -> None:
     )
     st.caption("If the preview is blank, use the download button above "
                "(some browsers block inline PDFs).")
+
+
+def _render_pptx(path: Path) -> None:
+    data = path.read_bytes()
+    st.download_button("⬇ Download deck (.pptx)", data, file_name=path.name,
+                       mime="application/vnd.openxmlformats-officedocument."
+                            "presentationml.presentation",
+                       key=f"dl_{path}", type="primary")
+    try:
+        from pptx import Presentation
+        prs = Presentation(str(path))
+        slides = list(prs.slides)
+        st.caption(f"{len(slides)} slides · {path.stat().st_size / 1024:.0f} KB")
+        titles = []
+        for i, sl in enumerate(slides, 1):
+            t = ""
+            for sh in sl.shapes:
+                if sh.has_text_frame and sh.text_frame.text.strip():
+                    t = sh.text_frame.text.strip().splitlines()[0]
+                    break
+            titles.append(f"{i}. {t or '(untitled)'}")
+        st.markdown("\n".join(f"- {x}" for x in titles))
+    except Exception as exc:  # noqa: BLE001
+        st.caption(f"Deck saved. (Slide list unavailable: {exc})")
+    st.info("Download and open in PowerPoint / Google Slides / Keynote — "
+            "browsers can't render .pptx inline.")
 
 
 def _render_excel(path: Path) -> None:
@@ -105,20 +134,23 @@ def render_run(run_dir: Path) -> None:
         st.info("No output files found in this run folder yet.")
         return
 
-    st.caption(f"📁 `{run_dir}`  —  {len(art['pdf'])} PDF · "
+    st.caption(f"📁 `{run_dir}`  —  {len(art['pptx'])} deck · "
                f"{len(art['excel'])} Excel · {len(art['csv'])} CSV · "
                f"{len(art['charts'])} charts")
 
-    tabs = st.tabs(["📊 Segment summary", "📄 PDF report", "📗 Excel reports",
+    tabs = st.tabs(["📊 Segment summary", "🖥 Deck (PPTX)", "📗 Excel reports",
                     "📑 Segment data", "🖼 Charts"])
 
     with tabs[0]:
         _render_summary(run_dir, art)
 
     with tabs[1]:
-        if not art["pdf"]:
-            st.info("No PDF in this run.")
-        for p in art["pdf"]:
+        if not art["pptx"] and not art["pdf"]:
+            st.info("No deck in this run.")
+        for p in art["pptx"]:
+            st.subheader(p.name)
+            _render_pptx(p)
+        for p in art["pdf"]:            # legacy runs
             st.subheader(p.name)
             _render_pdf(p)
 

@@ -421,7 +421,7 @@ def run_pipeline(file_path: str, project_root: str = None,
                                priority_narrative=priority_narrative)
     outputs["msl"] = msl_path
     _notify(progress_callback, 6, "Generate outputs", "done",
-            detail=f"{len(outputs.get('csv_files', []))} CSVs + Excel + PDF")
+            detail=f"{len(outputs.get('csv_files', []))} CSVs + Excel + PPTX")
 
     # ── Step 7: Space Allocation ──────────────────────────────────────────
     logger.info("Step 7/7 — Space Allocation")
@@ -451,7 +451,7 @@ def run_pipeline(file_path: str, project_root: str = None,
     logger.info(f"  Priority Excel    : {outputs.get('priority_excel', 'N/A')}")
     logger.info(f"  MSL workbook      : {outputs['msl'] or 'skipped'}")
     logger.info(f"  Space allocation  : {outputs['space_allocation'] or 'skipped'}")
-    logger.info(f"  PDF report        : {outputs['pdf']}")
+    logger.info(f"  PPTX deck         : {outputs.get('pptx') or 'FAILED'}")
     logger.info("=" * 65)
 
     outputs["output_dir"] = output_dir

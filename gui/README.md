@@ -16,7 +16,7 @@ pip install -r requirements.txt        # first time (adds streamlit)
 |---|---|
 | **Sidebar** | Pick a source file from `inbox/`, set an optional row sample, hit **Run pipeline**. Files are auto-classified: a **dataset** has outlet columns (`OUTLET_UID_EDITED`, `VPO`, …) or SKU-transactional columns (`CUST_UNIQ_ID_VAL`, `NET_SALES`, …); anything else (pack dimensions, rack comparison) is flagged **reference** and the run is blocked unless you tick *Run anyway*. Default selection is `Market_Master_File.csv`. |
 | **Run & progress** | The Perfect Store wheel — 5 wedges that go grey → amber (running) → green (done) as the 7 steps execute — a step checklist with live detail, and a streaming log. |
-| **Outputs** | Browse every run in `outputs/<timestamp>/`: segment summary charts, the PDF report (inline + download), Excel workbooks (sheet-by-sheet), segment CSVs, and PNG charts. |
+| **Outputs** | Browse every run in `outputs/<timestamp>/`: segment summary charts, the PPTX deck (download + slide list), Excel workbooks (sheet-by-sheet), segment CSVs, and PNG charts. |
 
 ## Step → wheel mapping (`gui/steps.py`)
 

@@ -785,6 +785,160 @@ def generate_rich_segment_summaries(
     return results
 
 
+# ── Concise segment cards (for the PPTX deck) ────────────────────────────────
+
+CARD_KEYS = ["headline", "shopper_snapshot", "mission", "growth_potential",
+             "dominant_sec", "actions", "hero_skus"]
+
+
+def _clip_words(text: str, n: int) -> str:
+    words = str(text or "").split()
+    return " ".join(words[:n]) + ("…" if len(words) > n else "")
+
+
+def _empty_card(label_info: Optional[dict] = None) -> dict:
+    li = label_info or {}
+    return {
+        "headline": li.get("label", ""),
+        "shopper_snapshot": _clip_words(li.get("description", ""), 32),
+        "mission": li.get("occasion", ""),
+        "growth_potential": "Medium",
+        "dominant_sec": "",
+        "actions": ([{"lever": "Execution",
+                      "text": _clip_words(li.get("action", "Review priorities"), 16),
+                      "kpi": ""}]),
+        "hero_skus": [],
+    }
+
+
+def _coerce_card(raw: dict, label_info: Optional[dict]) -> dict:
+    """Enforce the schema + hard length caps on one LLM card object."""
+    base = _empty_card(label_info)
+    if not isinstance(raw, dict):
+        return base
+    out = dict(base)
+    out["headline"] = _clip_words(raw.get("headline") or base["headline"], 12)
+    out["shopper_snapshot"] = _clip_words(
+        raw.get("shopper_snapshot") or base["shopper_snapshot"], 34)
+    out["mission"] = _clip_words(raw.get("mission") or base["mission"], 6)
+    gp = str(raw.get("growth_potential") or "").strip().capitalize()
+    out["growth_potential"] = gp if gp in ("High", "Medium", "Low") else base["growth_potential"]
+    out["dominant_sec"] = str(raw.get("dominant_sec") or "").strip()[:6]
+    acts = []
+    for a in (raw.get("actions") or [])[:3]:
+        if isinstance(a, dict):
+            acts.append({
+                "lever": _clip_words(a.get("lever", ""), 4),
+                "text": _clip_words(a.get("text", ""), 16),
+                "kpi": _clip_words(a.get("kpi", ""), 6),
+            })
+        elif isinstance(a, str):
+            acts.append({"lever": "", "text": _clip_words(a, 16), "kpi": ""})
+    out["actions"] = acts or base["actions"]
+    skus = [str(s).strip() for s in (raw.get("hero_skus") or []) if str(s).strip()]
+    out["hero_skus"] = skus[:5]
+    return out
+
+
+def _parse_cards(text: str, cluster_ids: List[int],
+                 labels: Optional[dict]) -> dict:
+    """Parse the LLM's JSON array into {cluster_id: card}. Tolerant of fences."""
+    labels = labels or {}
+    clean = re.sub(r"^```(?:json)?|```$", "", (text or "").strip(),
+                   flags=re.MULTILINE).strip()
+    parsed = None
+    try:
+        parsed = json.loads(clean)
+    except Exception:
+        m = re.search(r"\[.*\]", clean, flags=re.DOTALL)
+        if m:
+            try:
+                parsed = json.loads(m.group(0))
+            except Exception:
+                parsed = None
+
+    by_id = {}
+    if isinstance(parsed, list):
+        for i, item in enumerate(parsed):
+            cid = item.get("cluster_id", cluster_ids[i]) if isinstance(item, dict) else cluster_ids[i]
+            try:
+                cid = int(cid)
+            except (TypeError, ValueError):
+                cid = cluster_ids[i] if i < len(cluster_ids) else i
+            by_id[cid] = item
+
+    out = {}
+    for cid in cluster_ids:
+        out[cid] = _coerce_card(by_id.get(cid, {}), labels.get(cid, {}))
+    return out
+
+
+def generate_concise_segment_cards(
+    profiles: List[dict],
+    api_key: str,
+    model: str = "claude-opus-4-6",
+    labels: Optional[dict] = None,
+    dq_context: Optional[str] = None,
+    priority_context: Optional[str] = None,
+) -> dict:
+    """One LLM call → a crisp, slide-ready card per cluster (strict JSON)."""
+    labels = labels or {}
+    cluster_ids = [p["cluster_id"] for p in profiles]
+
+    profile_block = "\n\n".join(
+        f"CLUSTER {p['cluster_id']} "
+        f"(pre-label: {labels.get(p['cluster_id'], {}).get('label', '—')}, "
+        f"channel: {labels.get(p['cluster_id'], {}).get('channel', '—')}, "
+        f"occasion: {labels.get(p['cluster_id'], {}).get('occasion', '—')})\n"
+        + _profile_to_prompt_block(p)
+        for p in profiles
+    )
+    universe_lines = []
+    for col in ["avg_VPO", "avg_TOTAL_REVENUE", "avg_AVG_SKU", "avg_ACTIVE_MONTHS"]:
+        vals = [p[col] for p in profiles if col in p]
+        if vals:
+            universe_lines.append(f"- Universe avg {col.replace('avg_', '')}: {np.mean(vals):,.1f}")
+    universe_block = "\n".join(universe_lines) or "Not available"
+
+    context_block = ""
+    if dq_context:
+        context_block += f"\nDATA QUALITY CONTEXT:\n{dq_context}\n"
+    if priority_context:
+        context_block += f"\nPRIORITY DISTRIBUTION CONTEXT:\n{priority_context}\n"
+
+    prompt = f"""Return ONLY a JSON array — one object per cluster, in ascending cluster_id order.
+No prose, no markdown, no code fence. Each object exactly:
+
+{{
+  "cluster_id": <int>,
+  "headline": "<=12 words — the segment's commercial essence>",
+  "shopper_snapshot": "<=32 words — who shops here and why they buy>",
+  "mission": "<=6 words — primary shopper mission>",
+  "growth_potential": "High" | "Medium" | "Low",
+  "dominant_sec": "<single letter A-E, or e.g. 'B/C'>",
+  "actions": [
+    {{"lever": "<1-3 words, e.g. Merch & Space>", "text": "<=16 words, imperative>", "kpi": "<=6 words>"}},
+    {{...}}, {{...}}
+  ],
+  "hero_skus": ["<specific SKU>", "<specific SKU>", "<specific SKU>"]
+}}
+
+Rules: exactly 3 actions; 3-5 hero_skus; Indian CPG trade language
+(GT/MT/kirana/AfH, VPO, SEC, Rs. price points); every claim grounded in the
+cluster data below; be terse — this goes straight onto a slide.
+
+CLUSTERS:
+{profile_block}
+
+UNIVERSE AVERAGES:
+{universe_block}
+{context_block}"""
+
+    text = call_llm(prompt, api_key, model, max_tokens=3200,
+                    system_prompt=_ctx.build("segmentation"))
+    return _parse_cards(text, cluster_ids, labels)
+
+
 # ── Main entry point ─────────────────────────────────────────────────────────
 
 def run_segmentation(df: pd.DataFrame, config: dict, api_key: str,
@@ -840,28 +994,35 @@ def run_segmentation(df: pd.DataFrame, config: dict, api_key: str,
                             if k in ("label", "description", "action")}
                       for cid, info in fallback_labels.items()}
 
-        logger.info("Requesting LLM rich per-segment summaries (parallel)...")
-        rich = generate_rich_segment_summaries(
-            profiles, api_key, model, labels=labels,
-            dq_context=dq_context, priority_context=priority_context,
-        )
+        logger.info("Requesting concise per-segment cards (single call)...")
+        try:
+            cards = generate_concise_segment_cards(
+                profiles, api_key, model, labels=labels,
+                dq_context=dq_context, priority_context=priority_context,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Concise card generation failed ({type(e).__name__}: {e}) — "
+                f"deriving cards from segment labels"
+            )
+            cards = {p["cluster_id"]: _empty_card(labels.get(p["cluster_id"], {}))
+                     for p in profiles}
     else:
         logger.warning(
             "LLM not configured (no API key and LLM_BACKEND!=local) — "
-            "skipping segment labeling and rich summaries"
+            "skipping segment labeling and cards"
         )
         labels = {cid: {"label": info["label"],
                         "description": info["description"],
                         "action": info["action"]}
                   for cid, info in fallback_labels.items()}
-        rich = {cid: _empty_rich_summary() for cid in range(n_clusters)}
+        cards = {cid: _empty_card(labels.get(cid, {})) for cid in range(n_clusters)}
 
-    # Merge rich summaries into the labels dict so downstream writers
-    # (PDF, Excel) can read shopper/demographics/etc. per cluster.
-    for cid, sections in rich.items():
+    # Attach the concise card to each label so the PPTX / Excel writers can use it.
+    for cid, card in cards.items():
         if cid not in labels:
             labels[cid] = {}
-        labels[cid].update(sections)
+        labels[cid]["card"] = card
 
     # Attach labels to DataFrame (short fields only — avoid CSV bloat from
     # repeating the rich prose on every row; it lives in the labels dict

@@ -2,7 +2,7 @@
 Output Agent — generates deliverables:
   1. Labelled segment CSVs (one per segment + combined)
   2. Excel workbook with a chart per segment
-  3. PDF narrative using Claude's summary
+  3. PPTX deck — one crisp slide per segment (see agents/ppt_agent.py)
 All outputs go to outputs/.
 """
 
@@ -43,7 +43,11 @@ def _charts_dir(output_dir: str) -> str:
 
 
 def _parse_radar_scores(dimensions_radar_text: str) -> list:
-    """Extract 8 numeric scores from the [RADAR CHART] Scores: [...] line."""
+    """Extract 8 numeric scores from the [RADAR CHART] Scores: [...] line.
+
+    Kept as a fallback only; the report now uses compute_radar_scores() so the
+    spider charts are always differentiated and data-grounded.
+    """
     import re
     m = re.search(r"Scores\s*:\s*\[([^\]]+)\]", dimensions_radar_text or "")
     if not m:
@@ -53,6 +57,141 @@ def _parse_radar_scores(dimensions_radar_text: str) -> list:
         return (scores + [3] * 8)[:8]
     except ValueError:
         return [3] * 8
+
+
+# ── Data-driven radar scores ────────────────────────────────────────────────
+# Each of the 8 dimensions maps to one or more real feature columns. We take the
+# per-cluster mean, z-score it against the whole outlet universe, average the
+# components, and map z→[1,5] (universe average = 3). This guarantees every
+# cluster's spider chart has a distinct shape.
+
+def _pack_cols(df: pd.DataFrame, suffix_tokens) -> list:
+    out = []
+    for c in df.columns:
+        cu = str(c).upper().strip()
+        if any(tok in cu for tok in suffix_tokens):
+            out.append(c)
+    return out
+
+
+def _share(df: pd.DataFrame, num_cols: list, denom_col: str):
+    present = [c for c in num_cols if c in df.columns]
+    if not present or denom_col not in df.columns:
+        return None
+    num = df[present].apply(pd.to_numeric, errors="coerce").clip(lower=0).sum(axis=1)
+    den = pd.to_numeric(df[denom_col], errors="coerce").replace(0, np.nan)
+    return (num / den).replace([np.inf, -np.inf], np.nan)
+
+
+def _num(df: pd.DataFrame, col: str):
+    return pd.to_numeric(df[col], errors="coerce") if col in df.columns else None
+
+
+def compute_radar_scores(df: pd.DataFrame, cluster_col: str = "cluster") -> dict:
+    """Return {cluster_id: [8 floats in 1..5]} in _RADAR_DIMENSIONS order."""
+    small = _pack_cols(df, ["SMALL 5", "SMALL <"])
+    medium = _pack_cols(df, ["MEDIUM 10", "MEDIUM 79"])
+    large = _pack_cols(df, ["LARGE 20", "LARGE 189", ">L >"])
+
+    vpo = _num(df, "VPO")
+    am = _num(df, "ACTIVE_MONTHS")
+    tot = _num(df, "TOTAL_REVENUE")
+    sku = _num(df, "AVG_SKU")
+
+    signals = {}
+    signals["bev_depth"] = [sku]                                   # range breadth proxy
+    signals["ic_mix"] = [_share(df, small + medium, "TOTAL_REVENUE")]
+    # Seasonal spike proxy: revenue skewed to large/festival packs, amplified when
+    # the store transacts in fewer months (burst-y demand).
+    burst = (1.0 / am.replace(0, np.nan)) if am is not None else None
+    signals["seasonal"] = [_share(df, large, "TOTAL_REVENUE"), burst]
+    signals["premium"] = [
+        _num(df, "premium_category_sold_num"),
+        _num(df, "premium_snacks_sold_num"),
+        _share(df, large, "TOTAL_REVENUE"),
+    ]
+    signals["low_pp"] = [_share(df, small, "TOTAL_REVENUE")]
+    signals["footfall"] = [_num(df, "estmtd_daily_footfall_numeric")]
+    signals["loyalty"] = [am]
+    signals["execution"] = [sku, _num(df, "cooler_available_num"), vpo]
+
+    order = ["bev_depth", "ic_mix", "seasonal", "premium",
+             "low_pp", "footfall", "loyalty", "execution"]
+
+    # Reduce each dimension's component series to one per-outlet z-scored series.
+    dim_series = {}
+    for dim in order:
+        comps = [s for s in signals[dim] if s is not None and s.notna().any()]
+        if not comps:
+            dim_series[dim] = None
+            continue
+        zs = []
+        for s in comps:
+            mu, sd = s.mean(), s.std(ddof=0)
+            zs.append((s - mu) / (sd if sd else 1.0))
+        dim_series[dim] = pd.concat(zs, axis=1).mean(axis=1)
+
+    grp = df[cluster_col]
+    out = {}
+    for cid in sorted(pd.Series(grp).dropna().unique()):
+        mask = grp == cid
+        row = []
+        for dim in order:
+            s = dim_series[dim]
+            if s is None:
+                row.append(3.0)
+                continue
+            z = s[mask].mean()
+            row.append(float(np.clip(3.0 + (0.0 if pd.isna(z) else z) * 1.15, 1.0, 5.0)))
+        out[int(cid)] = row
+    return out
+
+
+def build_radar_charts(df: pd.DataFrame, labels: dict, output_dir: str) -> dict:
+    """Render one differentiated radar PNG per cluster. Returns {cid: path}."""
+    scores_by_cid = compute_radar_scores(df)
+    universe_avg = [3.0] * len(_RADAR_DIMENSIONS)
+    paths = {}
+    for cid in sorted(df["cluster"].unique()):
+        cid = int(cid)
+        name = labels.get(cid, {}).get("label", f"Cluster {cid}")[:28]
+        p = plot_radar_chart(cid, name, scores_by_cid.get(cid, universe_avg),
+                             universe_avg, output_dir)
+        if p and os.path.exists(p):
+            paths[cid] = p
+    return paths
+
+
+def _card_to_text(card: dict) -> str:
+    """Flatten a concise segment card into a single wrapped cell string."""
+    if not card:
+        return ""
+    lines = []
+    if card.get("headline"):
+        lines.append(str(card["headline"]))
+    if card.get("shopper_snapshot"):
+        lines.append("")
+        lines.append(str(card["shopper_snapshot"]))
+    if card.get("mission"):
+        lines.append(f"Mission: {card['mission']}")
+    meta = []
+    if card.get("growth_potential"):
+        meta.append(f"Growth: {card['growth_potential']}")
+    if card.get("dominant_sec"):
+        meta.append(f"SEC: {card['dominant_sec']}")
+    if meta:
+        lines.append("  |  ".join(meta))
+    for i, a in enumerate(card.get("actions", []) or [], 1):
+        if isinstance(a, dict):
+            lever = a.get("lever", "")
+            txt = a.get("text", "")
+            kpi = a.get("kpi", "")
+            lines.append(f"{i}. [{lever}] {txt}" + (f"  (KPI: {kpi})" if kpi else ""))
+        else:
+            lines.append(f"{i}. {a}")
+    if card.get("hero_skus"):
+        lines.append("Hero SKUs: " + ", ".join(str(s) for s in card["hero_skus"]))
+    return "\n".join(lines)
 
 
 def plot_radar_chart(cluster_id: int, cluster_name: str,
@@ -293,43 +432,40 @@ def write_excel_workbook(df: pd.DataFrame, labels: dict, output_dir: str) -> str
         summary_ws.insert_chart("A" + str(n_rows + 24), pie)
 
         # ── Rich Summaries sheet (LLM-generated 7-section, one row per cluster) ─
-        rich_cols = [
-            ("identity_card", "Identity Card"),
-            ("shopper_profile", "Shopper Profile"),
-            ("demographic_catchment", "Demographic & Catchment"),
-            ("store_characteristics", "Store Characteristics"),
-            ("dimensions_radar", "Dimensions & Radar"),
-            ("comparative_snapshot", "Comparative Snapshot"),
-            ("commercial_action_plan", "Commercial Action Plan"),
-        ]
         rich_rows = []
         for cid in sorted(df["cluster"].unique()):
             info = labels.get(cid, {})
-            row = {
+            card = info.get("card", {}) or {}
+            rich_rows.append({
                 "Cluster": cid,
                 "Label": info.get("label", f"Segment {cid}"),
                 "Channel": info.get("channel", ""),
                 "Occasion": info.get("occasion", ""),
-            }
-            for key, title in rich_cols:
-                row[title] = info.get(key, "")
-            rich_rows.append(row)
+                "Headline": card.get("headline", ""),
+                "Shopper Snapshot": card.get("shopper_snapshot", ""),
+                "Mission": card.get("mission", ""),
+                "Growth": card.get("growth_potential", ""),
+                "Dominant SEC": card.get("dominant_sec", ""),
+                "Top Actions": _card_to_text({"actions": card.get("actions", [])}),
+                "Hero SKUs": ", ".join(str(s) for s in card.get("hero_skus", []) or []),
+            })
 
         if rich_rows:
             rich_df = pd.DataFrame(rich_rows)
-            rich_df.to_excel(writer, sheet_name="Rich Summaries", index=False)
-            rich_ws = writer.sheets["Rich Summaries"]
+            rich_df.to_excel(writer, sheet_name="Segment Cards", index=False)
+            rich_ws = writer.sheets["Segment Cards"]
             wrap_fmt = workbook.add_format({"text_wrap": True, "valign": "top"})
             for col_num, col_name in enumerate(rich_df.columns):
                 rich_ws.write(0, col_num, col_name, header_fmt)
                 if col_name == "Cluster":
                     width = 10
-                elif col_name in ("Label", "Channel", "Occasion"):
-                    width = 28
+                elif col_name in ("Label", "Channel", "Occasion", "Mission",
+                                  "Growth", "Dominant SEC"):
+                    width = 24
                 else:
-                    width = 60
+                    width = 52
                 rich_ws.set_column(col_num, col_num, width, wrap_fmt)
-            rich_ws.set_default_row(180)
+            rich_ws.set_default_row(120)
 
         # ── Cluster Overview chart sheet ──────────────────────────────────
         cnames = [labels.get(cid, {}).get("label", f"Seg {cid}")[:20]
@@ -351,12 +487,14 @@ def write_excel_workbook(df: pd.DataFrame, labels: dict, output_dir: str) -> str
             overview_ws.insert_image("B32", bubble_path, {"x_scale": 0.9, "y_scale": 0.9})
 
         # ── Radar charts sheet ────────────────────────────────────────────
+        # Data-driven scores → every cluster's shape is distinct.
+        radar_scores = compute_radar_scores(df)
         universe_avg_scores = [3.0] * 8
         radar_ws = workbook.add_worksheet("Radar Charts")
         row_offset, col_offset = 1, 1
         for idx, cid in enumerate(sorted(df["cluster"].unique())):
             info = labels.get(cid, {})
-            scores = _parse_radar_scores(info.get("dimensions_radar", ""))
+            scores = radar_scores.get(int(cid), universe_avg_scores)
             radar_path = plot_radar_chart(
                 cid, info.get("label", f"Cluster {cid}")[:25],
                 scores, universe_avg_scores, output_dir
@@ -786,14 +924,26 @@ def generate_outputs(df: pd.DataFrame, labels: dict, dq_report: str,
                      output_dir: str, priority_narrative: str = "") -> dict:
     """Generate all output files. Returns dict of output paths."""
     csv_files = write_segment_csvs(df, labels, output_dir)
+
+    # Differentiated, data-driven radar charts — shared by the Excel workbook
+    # and the PPTX deck.
+    radar_paths = build_radar_charts(df, labels, output_dir)
+
     excel_path = write_excel_workbook(df, labels, output_dir)
     priority_excel = write_priority_excel(df, output_dir)
-    pdf_path = write_pdf_report(df, labels, dq_report, output_dir,
-                                priority_narrative=priority_narrative)
+
+    pptx_path = None
+    try:
+        from agents.ppt_agent import generate_pptx
+        pptx_path = generate_pptx(df, labels, output_dir,
+                                  radar_paths=radar_paths,
+                                  priority_narrative=priority_narrative)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"PPTX generation failed ({type(exc).__name__}: {exc})")
 
     return {
         "csv_files": csv_files,
         "excel": excel_path,
         "priority_excel": priority_excel,
-        "pdf": pdf_path,
+        "pptx": pptx_path,
     }

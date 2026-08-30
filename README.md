@@ -2,7 +2,8 @@
 
 An end-to-end, LLM-assisted pipeline that turns raw store-level CPG data into
 **Perfect Store** execution deliverables: store segments, A/B/C/D prioritization,
-Must-Stock Lists, planogram space allocation, and executive PDF/Excel reports.
+Must-Stock Lists, planogram space allocation, a crisp PPTX deck (one slide per
+segment) and Excel workbooks.
 
 Perfect Store is a CPG commercial-execution framework that answers three questions:
 
@@ -27,7 +28,7 @@ log line and a progress event):
 | 3 | Prioritization | `agents/prioritization_agent.py` | A/B/C/D tiers by VPO percentile, 75th-percentile quantile-regression potential, opportunity gap → `logs/priority_narrative_*.txt` |
 | 4 | Segmentation | `agents/segmentation_agent.py` | K-means clusters on sales / attributes / demographics / proximity / SKU mix, LLM-labelled in trade terms |
 | 5 | MSL generation | `agents/msl_generator.py` | `MSL_Priority_Buckets_*.xlsx` — one Must-Stock sheet per priority bucket |
-| 6 | Outputs | `agents/output_agent.py` | segment CSVs, `segment_report_*.xlsx`, `priority_report_*.xlsx`, `perfect_store_report_*.pdf`, charts |
+| 6 | Outputs | `agents/output_agent.py`, `agents/ppt_agent.py` | segment CSVs, `segment_report_*.xlsx`, `priority_report_*.xlsx`, `perfect_store_deck_*.pptx` (1 slide/segment), differentiated radar charts |
 | 7 | Space allocation | `agents/space_allocation_agent.py` | `Space_Allocation_*.xlsx` — rack facings + asset recommendations per bucket |
 
 LLM calls go through `agents/llm_client.py`, which supports several backends
@@ -114,8 +115,8 @@ Each run writes to `outputs/<YYYYMMDD_HHMMSS>/`:
 - `priority_report_*.xlsx` — A/B/C/D distribution and potential vs. actual
 - `MSL_Priority_Buckets_*.xlsx` — Must-Stock List per bucket
 - `Space_Allocation_*.xlsx` — rack facings and asset counts
-- `perfect_store_report_*.pdf` — executive narrative
-- `charts/` — radar, bar, bubble and heatmap PNGs
+- `perfect_store_deck_*.pptx` — title, portfolio overview, A/B/C/D priority, then one crisp slide per segment (stat strip, differentiated radar, shopper snapshot, top-3 actions, hero SKUs)
+- `charts/` — per-cluster radar (data-driven), bar, bubble and heatmap PNGs
 
 DQ reports and priority narratives land in `logs/`.
 
