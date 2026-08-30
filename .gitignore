@@ -16,3 +16,10 @@ venv/
 
 # OS
 .DS_Store
+
+# Generated pipeline artifacts (recreated by every run — keep only inputs + code)
+outputs/
+logs/
+processing/
+Perfect_Store_AI_Audit_Sonnet.pdf
+Week1_Changes.pdf
