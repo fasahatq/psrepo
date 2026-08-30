@@ -14,3 +14,6 @@ google-cloud-aiplatform>=1.60.0
 statsmodels>=0.14.0
 scipy>=1.11.0
 tenacity>=8.2.0
+
+# GUI (Streamlit control panel — gui/app.py)
+streamlit>=1.37.0

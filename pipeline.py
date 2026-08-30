@@ -217,14 +217,32 @@ def _aggregate_sku_to_outlet(df: pd.DataFrame, project_root: str = None) -> pd.D
 
 # ── Pipeline ─────────────────────────────────────────────────────────────────
 
+def _notify(callback, step: int, name: str, status: str, detail: str = ""):
+    """Fire the optional progress callback without ever breaking the pipeline.
+
+    status is one of: "start" (init event, step 0), "running", "done".
+    Used by the GUI to drive the live Perfect Store wheel; a no-op when
+    callback is None (i.e. normal CLI / watcher runs).
+    """
+    if callback is None:
+        return
+    try:
+        callback(step, name, status, detail)
+    except Exception:  # pragma: no cover - progress reporting must never fail a run
+        logger.debug("progress_callback raised", exc_info=True)
+
+
 def run_pipeline(file_path: str, project_root: str = None,
-                 sample_size: int = None):
+                 sample_size: int = None, progress_callback=None):
     """
     Run the full pipeline for a single file.
     Args:
-        file_path   : path to the data file (in processing/)
-        project_root: root folder of the project
-        sample_size : if set, only use this many rows (useful for testing)
+        file_path        : path to the data file (in processing/)
+        project_root     : root folder of the project
+        sample_size      : if set, only use this many rows (useful for testing)
+        progress_callback: optional callable(step:int, name:str, status:str,
+                           detail:str) invoked as each step starts/finishes.
+                           Consumed by the Streamlit GUI (gui/app.py).
     """
     if project_root is None:
         project_root = os.path.dirname(os.path.abspath(__file__))
@@ -264,6 +282,11 @@ def run_pipeline(file_path: str, project_root: str = None,
 
     display_model = model
 
+    _notify(progress_callback, 0, "init", "start",
+            detail=json.dumps({"run_id": run_id, "output_dir": output_dir,
+                               "file": file_path, "data_mode": data_mode,
+                               "llm_backend": llm_backend, "model": display_model}))
+
     logger.info("=" * 65)
     logger.info(f"Perfect Store Pipeline | run_id: {run_id}")
     logger.info(f"File      : {file_path}")
@@ -273,7 +296,10 @@ def run_pipeline(file_path: str, project_root: str = None,
 
     # ── Step 1: Load ─────────────────────────────────────────────────────
     logger.info("Step 1/7 — Loading data")
+    _notify(progress_callback, 1, "Load data", "running")
     df = load_data(file_path, sample_size=sample_size)
+    _notify(progress_callback, 1, "Load data", "done",
+            detail=f"{len(df):,} rows x {len(df.columns)} cols")
 
     if _is_sku_transactional(df):
         logger.info("Transactional SKU file detected — aggregating to flat outlet format "
@@ -282,6 +308,7 @@ def run_pipeline(file_path: str, project_root: str = None,
 
     # ── Step 2: Data Quality ─────────────────────────────────────────────
     logger.info("Step 2/7 — Running DQ checks")
+    _notify(progress_callback, 2, "Data quality checks", "running")
     dq_results = run_dq_checks(df, config)
     passed = sum(1 for r in dq_results if r.get("pass"))
     logger.info(f"DQ: {passed}/{len(dq_results)} checks passed")
@@ -309,6 +336,8 @@ def run_pipeline(file_path: str, project_root: str = None,
     with open(dq_log, "w", encoding="utf-8") as f:
         f.write(dq_report)
     logger.info(f"DQ report saved: {dq_log}")
+    _notify(progress_callback, 2, "Data quality checks", "done",
+            detail=f"{passed}/{len(dq_results)} checks passed")
 
     # Gate: halt on DQ FAIL if DQ_HALT_ON_FAIL=1 (default: warn and continue).
     # Prevents silent propagation of bad data through prioritization/segmentation.
@@ -332,6 +361,7 @@ def run_pipeline(file_path: str, project_root: str = None,
     # Runs before segmentation so priority_bucket is available as a
     # clustering feature, producing commercially-aligned segments.
     logger.info("Step 3/7 — Prioritization (A/B/C/D + opportunity gap)")
+    _notify(progress_callback, 3, "Prioritization", "running")
     df_out, priority_narrative = run_prioritization(
         df, config, api_key, model, dq_context=dq_context)
 
@@ -345,6 +375,8 @@ def run_pipeline(file_path: str, project_root: str = None,
     with open(priority_log, "w", encoding="utf-8") as f:
         f.write(priority_narrative)
     logger.info(f"Priority narrative saved: {priority_log}")
+    _notify(progress_callback, 3, "Prioritization", "done",
+            detail=" | ".join(f"{t}:{c:,}" for t, c in priority_counts.items()))
 
     # Build a compact priority context string for segmentation to consume.
     priority_context = _build_priority_context(df_out)
@@ -353,12 +385,15 @@ def run_pipeline(file_path: str, project_root: str = None,
     # Receives df_out which already carries priority_bucket / priority columns,
     # allowing segmentation to use priority tier as a clustering signal.
     logger.info("Step 4/7 — Segmentation")
+    _notify(progress_callback, 4, "Segmentation", "running")
     df_out, labels = run_segmentation(
         df_out, config, api_key, model,
         dq_context=dq_context, priority_context=priority_context,
     )
 
     n_segments = df_out["cluster"].nunique()
+    _notify(progress_callback, 4, "Segmentation", "done",
+            detail=f"{n_segments} segments / {len(df_out):,} outlets")
     logger.info(f"Segmentation complete: {n_segments} segments across {len(df_out):,} outlets")
     for cid, info in labels.items():
         cnt = (df_out["cluster"] == cid).sum()
@@ -366,23 +401,31 @@ def run_pipeline(file_path: str, project_root: str = None,
 
     # ── Step 5: MSL Generation ────────────────────────────────────────────
     logger.info("Step 5/7 — MSL Generation")
+    _notify(progress_callback, 5, "MSL generation", "running")
     sku_file = config.get("sku_file", "India_Synthetic_SKU_Data.csv")
     sku_csv  = os.path.join(project_root, config.get("inbox_dir", "inbox"), sku_file)
     msl_path = run_msl_from_df(df_out, sku_csv, output_dir,
                                api_key=api_key, model=model, labels=labels)
     if msl_path:
         logger.info(f"MSL workbook saved: {msl_path}")
+        _notify(progress_callback, 5, "MSL generation", "done",
+                detail=Path(msl_path).name)
     else:
         logger.warning("MSL generation skipped (SKU file missing or no matching outlets)")
+        _notify(progress_callback, 5, "MSL generation", "done", detail="skipped")
 
     # ── Step 6: Outputs ───────────────────────────────────────────────────
     logger.info("Step 6/7 — Generating outputs")
+    _notify(progress_callback, 6, "Generate outputs", "running")
     outputs = generate_outputs(df_out, labels, dq_report, output_dir,
                                priority_narrative=priority_narrative)
     outputs["msl"] = msl_path
+    _notify(progress_callback, 6, "Generate outputs", "done",
+            detail=f"{len(outputs.get('csv_files', []))} CSVs + Excel + PDF")
 
     # ── Step 7: Space Allocation ──────────────────────────────────────────
     logger.info("Step 7/7 — Space Allocation")
+    _notify(progress_callback, 7, "Space allocation", "running")
     space_alloc_path = None
     if msl_path:
         try:
@@ -398,6 +441,8 @@ def run_pipeline(file_path: str, project_root: str = None,
     else:
         logger.warning("Space allocation skipped — no MSL file available")
     outputs["space_allocation"] = space_alloc_path
+    _notify(progress_callback, 7, "Space allocation", "done",
+            detail=Path(space_alloc_path).name if space_alloc_path else "skipped")
 
     logger.info("=" * 65)
     logger.info("Pipeline complete!")
@@ -408,6 +453,10 @@ def run_pipeline(file_path: str, project_root: str = None,
     logger.info(f"  Space allocation  : {outputs['space_allocation'] or 'skipped'}")
     logger.info(f"  PDF report        : {outputs['pdf']}")
     logger.info("=" * 65)
+
+    outputs["output_dir"] = output_dir
+    outputs["run_id"] = run_id
+    _notify(progress_callback, 8, "complete", "done", detail=output_dir)
 
     return outputs
 
