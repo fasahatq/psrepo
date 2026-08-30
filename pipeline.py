@@ -29,7 +29,7 @@ logger = logging.getLogger("perfect_store.pipeline")
 # ── Config & data loading ────────────────────────────────────────────────────
 
 def load_config(project_root: str) -> dict:
-    config_path = os.path.join(project_root, ".claude", "config.json")
+    config_path = os.path.join(project_root, "config", "config.json")
     with open(config_path) as f:
         return json.load(f)
 

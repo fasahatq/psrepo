@@ -1893,6 +1893,7 @@ def build_pdf(output_path: str):
 
 
 if __name__ == "__main__":
-    out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       "Perfect_Store_AI_Audit.pdf")
+    out = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "Perfect_Store_AI_Audit.pdf")
     build_pdf(out)

@@ -43,8 +43,9 @@ MID_GRAY   = colors.HexColor("#E0E0E0")
 PAGE_W, PAGE_H = A4
 MARGIN = 1.8 * cm
 
-OUTPUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                           "Week1_Changes.pdf")
+OUTPUT_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "Week1_Changes.pdf")
 
 RUN_DATE = datetime.now().strftime("%B %d, %Y")
 RUN_TIME = datetime.now().strftime("%H:%M")

@@ -88,7 +88,7 @@ def cmd_process_inbox():
 
 def cmd_generate_sample():
     """Generate sample CPG data for testing."""
-    from generate_sample_data import generate_sample_data
+    from scripts.generate_sample_data import generate_sample_data
     output_path = os.path.join(PROJECT_ROOT, "inbox", "sample_cpg_data.csv")
     generate_sample_data(output_path)
     print(f"Sample data written to: {output_path}")

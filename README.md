@@ -44,15 +44,16 @@ pipeline.py             the 7-step orchestrator
 agents/                 one module per stage + llm_client, context_loader, watcher
 context/
   project.md            Perfect Store framework + glossary (always loaded into prompts)
-  agents/*.md            per-agent prompt context
+  agents/*.md           per-agent prompt context
 gui/                    Streamlit control panel — see gui/README.md
+config/config.json      column mapping, DQ thresholds, segmentation features
+scripts/                standalone helpers (sample data, synthetic SKU, audit/week-1 PDFs, trim)
+docs/                   architecture & solution decks (.pptx)
 inbox/                  input data files  (tracked)
 processing/             transient copies of files being processed  (git-ignored)
 outputs/<timestamp>/    all generated deliverables per run  (git-ignored)
 logs/                   DQ reports, priority narratives, pipeline.log  (git-ignored)
-.claude/config.json     column mapping, DQ thresholds, segmentation features
 .env                    LLM backend + credentials  (git-ignored; copy from .env.template)
-generate_*.py           standalone helpers (sample data, synthetic SKU, audit/week-1 PDFs)
 ```
 
 > `outputs/`, `logs/`, and `processing/` are **not** version-controlled — every
@@ -122,7 +123,7 @@ DQ reports and priority narratives land in `logs/`.
 
 ## Configuration
 
-`.claude/config.json`:
+`config/config.json`:
 
 | Key | Purpose |
 |---|---|
