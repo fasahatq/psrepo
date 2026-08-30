@@ -15,8 +15,12 @@ pip install -r requirements.txt        # first time (adds streamlit)
 | Panel | |
 |---|---|
 | **Sidebar** | Pick a source file from `inbox/`, set an optional row sample, hit **Run pipeline**. Files are auto-classified: a **dataset** has outlet columns (`OUTLET_UID_EDITED`, `VPO`, …) or SKU-transactional columns (`CUST_UNIQ_ID_VAL`, `NET_SALES`, …); anything else (pack dimensions, rack comparison) is flagged **reference** and the run is blocked unless you tick *Run anyway*. Default selection is `Market_Master_File.csv`. |
-| **Run & progress** | The Perfect Store wheel — 5 wedges that go grey → amber (running) → green (done) as the 7 steps execute — a step checklist with live detail, and a streaming log. |
-| **Outputs** | Browse every run in `outputs/<timestamp>/`: segment summary charts, the PPTX deck (download + slide list), Excel workbooks (sheet-by-sheet), segment CSVs, and PNG charts. |
+| **Run & progress** | The Perfect Store wheel — 5 wedges that go grey → amber (running) → green (done) as the 7 steps execute — a **vertical stepper** with per-step state, detail and elapsed time, and a **console-style log panel** (auto-scroll, level colouring, level filter, copy). Live panels refresh via `st.fragment` — no full-page reload. |
+| **Outputs** | Browse every run in `outputs/<timestamp>/`: a **download strip** of artifact cards (deck/Excel/CSV with sizes; deck shows slide count), a segment summary with formatted tables + charts, the deck slide list, Excel workbooks (sheet-by-sheet), segment CSVs and PNG charts. |
+
+The app has a branded header with a live status pill (Idle / Running / Complete /
+Failed), Streamlit's default chrome hidden, and remembers the selected file,
+sample size and active view across reruns (via URL query params).
 
 ## Step → wheel mapping (`gui/steps.py`)
 
@@ -41,6 +45,7 @@ CLI (`python main.py run …`) and the watcher are unaffected.
 
 ```
 gui/app.py       Streamlit entry point
+gui/ui.py        shared CSS + components (header, stepper, console, callouts, cards)
 gui/wheel.py     the live SVG wheel
 gui/runner.py    background pipeline runner + log capture
 gui/outputs.py   artifact discovery + viewers
