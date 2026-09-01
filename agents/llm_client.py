@@ -82,8 +82,9 @@ def _get_llm_disk_cache():
 
 
 def _llm_disk_cache_key(backend: str, model: str, max_tokens: int,
-                         system_prompt: str, prompt: str) -> str:
-    raw = f"{backend}|{model}|{max_tokens}|{system_prompt or ''}|{prompt}"
+                         system_prompt: str, prompt: str,
+                         has_schema: bool = False) -> str:
+    raw = f"{backend}|{model}|{max_tokens}|{has_schema}|{system_prompt or ''}|{prompt}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -222,7 +223,8 @@ def _is_retryable(exc: Exception) -> bool:
 
 def call_llm(prompt: str, api_key: str, model: str,
              max_tokens: int = 2000,
-             system_prompt: str = None) -> str:
+             system_prompt: str = None,
+             response_schema=None) -> str:
     """
     Route an LLM call to the configured backend with automatic retry on
     transient errors (503 UNAVAILABLE, 429 rate-limit).
@@ -233,14 +235,18 @@ def call_llm(prompt: str, api_key: str, model: str,
       Attempt delays: 5 s → 10 s → 20 s
 
     Args:
-        prompt        : user-turn prompt string
-        api_key       : Anthropic API key — ignored in local/gemini/vertex mode
-        model         : model name — ignored in local mode
-        max_tokens    : maximum tokens to generate
-        system_prompt : optional system-level context injected before the user turn.
-                        For Anthropic this maps to the `system` parameter.
-                        For Gemini/Vertex it is passed as system_instruction.
-                        For local (Ollama) it is prepended as a system message.
+        prompt         : user-turn prompt string
+        api_key        : Anthropic API key — ignored in local/gemini/vertex mode
+        model          : model name — ignored in local mode
+        max_tokens     : maximum tokens to generate
+        system_prompt  : optional system-level context injected before the user turn.
+                         For Anthropic this maps to the `system` parameter.
+                         For Gemini/Vertex it is passed as system_instruction.
+                         For local (Ollama) it is prepended as a system message.
+        response_schema: optional google.genai.types.Schema enforcing structured
+                         JSON output. Only honoured on the gemini/vertex(-gemini)
+                         backends — silently ignored everywhere else (anthropic,
+                         local, azure, and Claude-on-Vertex have no equivalent).
     """
     backend     = os.getenv("LLM_BACKEND", "anthropic").strip().lower()
     max_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
@@ -251,7 +257,8 @@ def call_llm(prompt: str, api_key: str, model: str,
     cache_key  = None
     if disk_cache is not None:
         cache_key = _llm_disk_cache_key(
-            backend, model or "", max_tokens, system_prompt, prompt
+            backend, model or "", max_tokens, system_prompt, prompt,
+            has_schema=bool(response_schema),
         )
         cached = disk_cache.get(cache_key)
         if cached is not None:
@@ -266,9 +273,11 @@ def call_llm(prompt: str, api_key: str, model: str,
             elif backend == "azure":
                 result = _call_azure_openai(prompt, max_tokens, system_prompt)
             elif backend == "gemini":
-                result = _call_gemini(prompt, max_tokens, system_prompt)
+                result = _call_gemini(prompt, max_tokens, system_prompt,
+                                      response_schema=response_schema)
             elif backend == "vertex":
-                result = _call_vertex(prompt, max_tokens, system_prompt)
+                result = _call_vertex(prompt, max_tokens, system_prompt,
+                                      response_schema=response_schema)
             else:
                 result = _call_anthropic(prompt, api_key, model, max_tokens, system_prompt)
             break   # success — exit retry loop
@@ -420,7 +429,8 @@ def _call_azure_openai(prompt: str, max_tokens: int, system_prompt: str = None) 
 
 # ── Gemini API (google-genai SDK, API key) ───────────────────────────────────
 
-def _call_gemini(prompt: str, max_tokens: int, system_prompt: str = None) -> str:
+def _call_gemini(prompt: str, max_tokens: int, system_prompt: str = None,
+                 response_schema=None) -> str:
     """
     Call Gemini via the Google AI Gemini API using an API key.
     Requires: pip install google-genai
@@ -472,6 +482,10 @@ def _call_gemini(prompt: str, max_tokens: int, system_prompt: str = None) -> str
         else:
             config_kwargs["system_instruction"] = system_prompt
 
+    if response_schema is not None:
+        config_kwargs["response_mime_type"] = "application/json"
+        config_kwargs["response_schema"] = response_schema
+
     response = client.models.generate_content(
         model=model_name,
         contents=prompt,
@@ -502,7 +516,8 @@ def _call_gemini(prompt: str, max_tokens: int, system_prompt: str = None) -> str
 
 # ── Vertex AI / Gemini (Google Cloud) ───────────────────────────────────────
 
-def _call_vertex(prompt: str, max_tokens: int, system_prompt: str = None) -> str:
+def _call_vertex(prompt: str, max_tokens: int, system_prompt: str = None,
+                 response_schema=None) -> str:
     """
     Call a model on Google Cloud Vertex AI using Application Default Credentials.
 
@@ -512,6 +527,9 @@ def _call_vertex(prompt: str, max_tokens: int, system_prompt: str = None) -> str
 
     Auth: gcloud auth application-default login  (or a service account)
     Env:  VERTEX_PROJECT, VERTEX_LOCATION (Gemini) / VERTEX_CLAUDE_LOCATION (Claude)
+
+    response_schema is only honoured on the Gemini path — Claude on Vertex has
+    no equivalent parameter and ignores it.
     """
     project = os.getenv("VERTEX_PROJECT")
     if not project:
@@ -522,7 +540,8 @@ def _call_vertex(prompt: str, max_tokens: int, system_prompt: str = None) -> str
     if model_name.startswith("claude"):
         return _call_vertex_claude(prompt, max_tokens, system_prompt, project, model_name)
     else:
-        return _call_vertex_gemini(prompt, max_tokens, system_prompt, project, model_name)
+        return _call_vertex_gemini(prompt, max_tokens, system_prompt, project, model_name,
+                                   response_schema=response_schema)
 
 
 def _call_vertex_claude(prompt: str, max_tokens: int, system_prompt: str,
@@ -576,7 +595,7 @@ def _call_vertex_claude(prompt: str, max_tokens: int, system_prompt: str,
 
 
 def _call_vertex_gemini(prompt: str, max_tokens: int, system_prompt: str,
-                        project: str, model_name: str) -> str:
+                        project: str, model_name: str, response_schema=None) -> str:
     """Call a Gemini model on Vertex AI via the google-genai SDK."""
     try:
         from google import genai
@@ -617,6 +636,10 @@ def _call_vertex_gemini(prompt: str, max_tokens: int, system_prompt: str,
             config_kwargs["cached_content"] = cache_name
         else:
             config_kwargs["system_instruction"] = system_prompt
+
+    if response_schema is not None:
+        config_kwargs["response_mime_type"] = "application/json"
+        config_kwargs["response_schema"] = response_schema
 
     response = client.models.generate_content(
         model=model_name,

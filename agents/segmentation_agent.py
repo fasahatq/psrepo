@@ -170,6 +170,193 @@ def engineer_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     return df, available
 
 
+# ── Cluster Diagnosis extras (differentiators, stability, anomaly flags) ─────
+# These are deterministic — no LLM calls — and feed the Interpretation and
+# Challenge stages with concrete evidence instead of free-text impressions.
+
+def _add_top_differentiators(profiles: List[dict], n: int = 8) -> List[dict]:
+    """
+    Rank each cluster's numeric features by deviation from the outlet-count-
+    weighted universe average, attaching the top N as `top_differentiators`.
+    Lets the Interpretation stage cite concrete evidence ("why this segment
+    exists") instead of prose alone, and gives the Challenge stage something
+    concrete to check a label against.
+    """
+    scalar_keys = list(dict.fromkeys(
+        k for p in profiles for k in p
+        if k.startswith("avg_") and isinstance(p[k], (int, float))
+    ))
+    demo_keys = list(dict.fromkeys(
+        k for p in profiles for k in p.get("avg_demographics", {})
+    ))
+
+    def _weighted_avg(key: str, getter) -> Optional[float]:
+        vals_weights = [(getter(p), p["outlet_count"]) for p in profiles
+                        if getter(p) is not None]
+        total_w = sum(w for _, w in vals_weights)
+        if not total_w:
+            return None
+        return sum(v * w for v, w in vals_weights) / total_w
+
+    universe_avg = {}
+    for k in scalar_keys:
+        universe_avg[k] = _weighted_avg(k, lambda p, k=k: p.get(k))
+    for k in demo_keys:
+        universe_avg[k] = _weighted_avg(
+            k, lambda p, k=k: p.get("avg_demographics", {}).get(k))
+
+    for p in profiles:
+        deviations = []
+        for k in scalar_keys:
+            uavg = universe_avg.get(k)
+            if k in p and uavg:
+                dev_pct = (p[k] - uavg) / abs(uavg)
+                deviations.append({
+                    "feature": k.replace("avg_", ""),
+                    "cluster_value": p[k],
+                    "universe_avg": round(uavg, 2),
+                    "pct_deviation": round(dev_pct * 100, 1),
+                })
+        for k in demo_keys:
+            v = p.get("avg_demographics", {}).get(k)
+            uavg = universe_avg.get(k)
+            if v is not None and uavg:
+                dev_pct = (v - uavg) / abs(uavg)
+                deviations.append({
+                    "feature": k,
+                    "cluster_value": v,
+                    "universe_avg": round(uavg, 2),
+                    "pct_deviation": round(dev_pct * 100, 1),
+                })
+        deviations.sort(key=lambda d: abs(d["pct_deviation"]), reverse=True)
+        p["top_differentiators"] = deviations[:n]
+
+    return profiles
+
+
+def compute_cluster_diagnostics(df: pd.DataFrame, feature_cols: list,
+                                model_obj, config: dict,
+                                sample_size: int = 10_000) -> dict:
+    """
+    Deterministic Cluster-Diagnosis extras beyond raw stats: nearest-neighbour
+    cluster (from fitted centroids), a sampled silhouette score per cluster,
+    and a size-anomaly flag. No LLM calls.
+
+    Silhouette/stability figures are computed on a random sample (default
+    10k rows) rather than the full dataset — silhouette is O(n^2) and this
+    pipeline routinely sees 900k-row files. The sample is refit through
+    build_feature_matrix independently, so its scaling is a close but not
+    bit-identical approximation of the production fit — acceptable for a
+    diagnostic signal, not used for the cluster assignments themselves.
+    """
+    seg_cfg = config.get("segmentation", {})
+    n_clusters = seg_cfg.get("n_clusters", 6)
+    diag_cfg = seg_cfg.get("diagnostics", {})
+    tiny_pct = diag_cfg.get("tiny_cluster_pct", 2.0)
+    dominant_pct = diag_cfg.get("dominant_cluster_pct", 60.0)
+    random_state = seg_cfg.get("random_state", 42)
+
+    # Nearest-cluster centroid distance — cheap, uses the already-fitted model.
+    nearest = {}
+    centers = getattr(model_obj, "cluster_centers_", None)
+    if centers is not None and len(centers) > 1:
+        from scipy.spatial.distance import cdist
+        dist = cdist(centers, centers)
+        np.fill_diagonal(dist, np.inf)
+        for cid in range(len(centers)):
+            nn = int(np.argmin(dist[cid]))
+            nearest[cid] = {
+                "nearest_cluster_id": nn,
+                "nearest_cluster_distance": round(float(dist[cid][nn]), 3),
+            }
+
+    # Sampled silhouette score per cluster.
+    silhouette_by_cluster = {}
+    try:
+        from sklearn.metrics import silhouette_samples
+        n = len(df)
+        sample_n = min(sample_size, n)
+        rng = np.random.RandomState(random_state)
+        idx = rng.choice(n, size=sample_n, replace=False) if n > sample_n else np.arange(n)
+        sample_df = df.iloc[idx]
+        X_sample, _, _ = build_feature_matrix(sample_df, feature_cols)
+        sample_labels = sample_df["cluster"].values
+        if len(set(sample_labels)) > 1:
+            scores = silhouette_samples(X_sample, sample_labels)
+            for cid in range(n_clusters):
+                mask = sample_labels == cid
+                if mask.any():
+                    silhouette_by_cluster[cid] = round(float(scores[mask].mean()), 3)
+    except Exception as e:
+        logger.warning(f"Silhouette diagnostics skipped ({type(e).__name__}: {e})")
+
+    results = {}
+    for cid in sorted(df["cluster"].unique()):
+        pct = (df["cluster"] == cid).mean() * 100
+        anomaly = None
+        if pct < tiny_pct:
+            anomaly = "tiny"
+        elif pct > dominant_pct:
+            anomaly = "dominant"
+        results[cid] = {
+            **nearest.get(cid, {}),
+            "silhouette_avg": silhouette_by_cluster.get(cid),
+            "size_anomaly_flag": anomaly,
+        }
+    return results
+
+
+# ── Context Enrichment (deterministic taxonomy + POI/GTM packaging) ─────────
+
+CHANNEL_TAXONOMY = ["GT", "MT", "AfH", "EC"]
+OCCASION_TAXONOMY = [
+    "Immediate/GrabGo", "FutureConsumption/StockUp", "MealAccompaniment",
+    "Celebratory", "OnTheMove", "Youth", "Premium", "Morning",
+]
+
+
+def build_cluster_context_pack(profile: dict) -> dict:
+    """
+    Context Agent: structures the channel/occasion taxonomy plus the
+    POI/demographic rollups already present in the profile into an explicit
+    block for the Interpretation stage — instead of those facts being
+    scattered loosely across ad-hoc prompt text.
+    """
+    poi_keys = [
+        "distance_to_nearest_school_in_km", "distance_to_nearest_large_office_in_km",
+        "distance_to_nearest_malls", "distance_to_nearest_train_stn_in_km",
+        "no_of_schools_in_a_1_km_radius",
+    ]
+    demo = profile.get("avg_demographics", {})
+    poi_summary = {k: demo[k] for k in poi_keys if k in demo}
+    sec_summary = {k: v for k, v in demo.items() if k.startswith("sec_")}
+
+    dominant_geo = {}
+    for key in ("top_DB State", "top_Top City", "top_sector",
+                "top_channel", "top_store_format"):
+        if key in profile:
+            dominant_geo[key.replace("top_", "")] = profile[key]
+
+    return {
+        "channel_taxonomy": CHANNEL_TAXONOMY,
+        "occasion_taxonomy": OCCASION_TAXONOMY,
+        "poi_summary": poi_summary,
+        "sec_summary": sec_summary,
+        "dominant_geography": dominant_geo,
+    }
+
+
+def _context_pack_to_prompt_block(pack: dict) -> str:
+    lines = []
+    if pack.get("dominant_geography"):
+        lines.append(f"- Dominant geography: {pack['dominant_geography']}")
+    if pack.get("poi_summary"):
+        lines.append(f"- POI proximity (avg km / count): {pack['poi_summary']}")
+    if pack.get("sec_summary"):
+        lines.append(f"- SEC household mix: {pack['sec_summary']}")
+    return "\n".join(lines)
+
+
 def _coerce_column_to_numeric(series: pd.Series) -> pd.Series:
     """
     Robustly convert a Series to float.
@@ -368,6 +555,23 @@ def label_segments_with_claude(
         if "avg_demographics" in p:
             profiles_text += f"- Demographics: {p['avg_demographics']}\n"
 
+        # Context Enrichment pack — channel/occasion taxonomy, POI/GTM rollup
+        context_pack = build_cluster_context_pack(p)
+        pack_block = _context_pack_to_prompt_block(context_pack)
+        if pack_block:
+            profiles_text += pack_block + "\n"
+
+        # Cluster Diagnosis extras — evidence for "why this segment exists"
+        if p.get("top_differentiators"):
+            top3 = p["top_differentiators"][:3]
+            profiles_text += "- Top differentiators vs. universe: " + "; ".join(
+                f"{d['feature']} {d['pct_deviation']:+.0f}% vs avg" for d in top3
+            ) + "\n"
+        if p.get("size_anomaly_flag"):
+            profiles_text += f"- Size anomaly: {p['size_anomaly_flag']} cluster\n"
+        if p.get("silhouette_avg") is not None:
+            profiles_text += f"- Cluster separation (silhouette): {p['silhouette_avg']}\n"
+
         profiles_text += "\n"
 
     upstream_context = ""
@@ -388,6 +592,8 @@ For each cluster, provide in the CPG/FMCG context:
 3. An **occasion** — one of: Immediate/GrabGo, FutureConsumption/StockUp, MealAccompaniment, Celebratory, OnTheMove, Youth, Premium, Morning
 4. A **description** (2-3 sentences) — what defines this store type, its shoppers, commercial significance
 5. An **action** for the Perfect Store / trade team — cooler placement, SKU assortment, activation type, visit frequency
+6. A **confidence** rating (High/Medium/Low) — how well-separated and commercially distinct this cluster actually is, based on its top differentiators, size anomaly flag, and silhouette score above. Be honest — a tiny or poorly-separated cluster should not get High confidence.
+7. A **why_this_segment_exists** sentence — must cite at least one concrete top differentiator or POI/demographic fact from the data above, not a generic restatement of the label.
 
 Use Indian CPG trade terminology: GT, MT, kirana, AfH, VPO, SEC, FMCG, Rs. price points.
 
@@ -399,19 +605,55 @@ Return ONLY a valid JSON array — no prose, no markdown fences. Each element mu
     "channel": "<GT|MT|AfH|EC>",
     "occasion": "<occasion name>",
     "description": "<2-3 sentences>",
-    "action": "<recommended action>"
+    "action": "<recommended action>",
+    "confidence": "<High|Medium|Low>",
+    "why_this_segment_exists": "<one evidence-citing sentence>"
   }}
 ]
 """
 
     text = call_llm(prompt, api_key, model, max_tokens=3000,
-                    system_prompt=_ctx.build("segmentation"))
+                    system_prompt=_ctx.build("segmentation"),
+                    response_schema=_build_cluster_label_schema())
     logger.info("Segment labels received from LLM.")
     labels = _parse_json_labels(text, len(profiles))
     if labels is None:
         logger.warning("JSON label parsing failed — falling back to text parser")
         labels = _parse_segment_labels(text, len(profiles))
     return labels
+
+
+def _build_cluster_label_schema():
+    """
+    Gemini/Vertex structured-output schema for cluster labels. Returns None
+    if google-genai isn't installed (e.g. anthropic-only environments) so
+    callers fall back to plain prompt-instructed JSON — no behaviour change
+    on backends where structured output isn't available.
+    """
+    try:
+        from google.genai import types as genai_types
+    except ImportError:
+        return None
+    return genai_types.Schema(
+        type=genai_types.Type.ARRAY,
+        items=genai_types.Schema(
+            type=genai_types.Type.OBJECT,
+            properties={
+                "cluster_id":  genai_types.Schema(type=genai_types.Type.INTEGER),
+                "label":       genai_types.Schema(type=genai_types.Type.STRING),
+                "channel":     genai_types.Schema(type=genai_types.Type.STRING,
+                                                  enum=CHANNEL_TAXONOMY),
+                "occasion":    genai_types.Schema(type=genai_types.Type.STRING),
+                "description": genai_types.Schema(type=genai_types.Type.STRING),
+                "action":      genai_types.Schema(type=genai_types.Type.STRING),
+                "confidence":  genai_types.Schema(type=genai_types.Type.STRING,
+                                                  enum=["High", "Medium", "Low"]),
+                "why_this_segment_exists": genai_types.Schema(type=genai_types.Type.STRING),
+            },
+            required=["cluster_id", "label", "channel", "occasion", "description",
+                      "action", "confidence", "why_this_segment_exists"],
+        ),
+    )
 
 
 def _parse_json_labels(text: str, n_clusters: int) -> Optional[dict]:
@@ -436,6 +678,8 @@ def _parse_json_labels(text: str, n_clusters: int) -> Optional[dict]:
                 "occasion":    item.get("occasion", "Immediate/GrabGo"),
                 "description": item.get("description", ""),
                 "action":      item.get("action", ""),
+                "confidence":  item.get("confidence", "Medium"),
+                "why_this_segment_exists": item.get("why_this_segment_exists", ""),
             }
         # Ensure every cluster has an entry
         for i in range(n_clusters):
@@ -444,7 +688,9 @@ def _parse_json_labels(text: str, n_clusters: int) -> Optional[dict]:
                     "label": f"Segment {i}", "channel": "GT",
                     "occasion": "Immediate/GrabGo",
                     "description": "Cluster profile pending review.",
-                    "action": "Review cluster details manually."
+                    "action": "Review cluster details manually.",
+                    "confidence": "Low",
+                    "why_this_segment_exists": "",
                 }
         return labels
     except Exception:
@@ -464,7 +710,8 @@ def _parse_segment_labels(text: str, n_clusters: int) -> dict:
             try:
                 cid = int(line_stripped.split(":")[0].replace("CLUSTER", "").strip())
                 current_cluster = cid
-                labels[cid] = {"label": "", "channel": "", "occasion": "", "description": "", "action": ""}
+                labels[cid] = {"label": "", "channel": "", "occasion": "", "description": "",
+                               "action": "", "confidence": "Medium", "why_this_segment_exists": ""}
             except ValueError:
                 continue
         elif current_cluster is not None:
@@ -478,6 +725,10 @@ def _parse_segment_labels(text: str, n_clusters: int) -> dict:
                 labels[current_cluster]["description"] = line_stripped.split(":", 1)[1].strip()
             elif upper.startswith("ACTION:"):
                 labels[current_cluster]["action"] = line_stripped.split(":", 1)[1].strip()
+            elif upper.startswith("CONFIDENCE:"):
+                labels[current_cluster]["confidence"] = line_stripped.split(":", 1)[1].strip()
+            elif upper.startswith("WHY_THIS_SEGMENT_EXISTS:") or upper.startswith("WHY THIS SEGMENT EXISTS:"):
+                labels[current_cluster]["why_this_segment_exists"] = line_stripped.split(":", 1)[1].strip()
 
     for i in range(n_clusters):
         if i not in labels:
@@ -486,9 +737,280 @@ def _parse_segment_labels(text: str, n_clusters: int) -> dict:
                 "channel": "GT",
                 "occasion": "Immediate/GrabGo",
                 "description": "Cluster profile pending review.",
-                "action": "Review cluster details manually."
+                "action": "Review cluster details manually.",
+                "confidence": "Low",
+                "why_this_segment_exists": "",
             }
     return labels
+
+
+# ── Challenge & Validation Agent ─────────────────────────────────────────────
+# Deterministic stability + priority-overlap checks, plus an LLM plausibility
+# critique of each proposed label. Produces a soft governance signal
+# (`validation_flags`) that output_agent renders as a review banner — it never
+# blocks the pipeline.
+
+def run_stability_check(df: pd.DataFrame, feature_cols: list, config: dict,
+                        n_runs: int = 5, sample_size: int = 20_000) -> dict:
+    """
+    Re-clusters a sample of the data with different random seeds and measures
+    how consistently each production cluster's members get reassigned
+    together (aligned via Hungarian max-overlap matching, not raw label ids,
+    since KMeans cluster ids are arbitrary across refits).
+
+    Returns {cluster_id: {"stability_score": float 0-1 or None, "stable": bool or None}}.
+    Deterministic — no LLM calls. Runs on a sample (default 20k rows) since
+    this pipeline sees files up to ~900k rows and re-clustering repeatedly at
+    full scale would be far too slow for a diagnostic check.
+    """
+    from sklearn.metrics import adjusted_rand_score
+    from scipy.optimize import linear_sum_assignment
+
+    seg_cfg = config.get("segmentation", {})
+    n_clusters = seg_cfg.get("n_clusters", 6)
+    base_seed = seg_cfg.get("random_state", 42)
+    threshold = seg_cfg.get("diagnostics", {}).get("stability_threshold", 0.6)
+
+    n = len(df)
+    sample_n = min(sample_size, n)
+    rng = np.random.RandomState(base_seed)
+    sample_idx = rng.choice(n, size=sample_n, replace=False) if n > sample_n else np.arange(n)
+
+    sample_df = df.iloc[sample_idx]
+    try:
+        X_sample, _, _ = build_feature_matrix(sample_df, feature_cols)
+    except Exception as e:
+        logger.warning(f"Stability check skipped — feature matrix build failed ({e})")
+        return {cid: {"stability_score": None, "stable": None}
+                for cid in sorted(df["cluster"].unique())}
+
+    orig_labels = sample_df["cluster"].values
+    match_counts = np.zeros(sample_n, dtype=float)
+    ari_scores = []
+
+    for run in range(n_runs):
+        seed = base_seed + 1000 + run
+        model = KMeans(n_clusters=n_clusters, random_state=seed, n_init=5, max_iter=200)
+        run_labels = model.fit_predict(X_sample)
+        ari_scores.append(adjusted_rand_score(orig_labels, run_labels))
+
+        # Align run_labels to orig_labels via max-overlap (Hungarian on -overlap)
+        cost = np.zeros((n_clusters, n_clusters))
+        for i in range(n_clusters):
+            in_i = orig_labels == i
+            for j in range(n_clusters):
+                cost[i, j] = -np.sum(in_i & (run_labels == j))
+        row_ind, col_ind = linear_sum_assignment(cost)
+        mapping = {j: i for i, j in zip(row_ind, col_ind)}
+        aligned = np.array([mapping.get(l, -1) for l in run_labels])
+        match_counts += (aligned == orig_labels).astype(float)
+
+    per_point_stability = match_counts / n_runs
+
+    results = {}
+    for cid in range(n_clusters):
+        mask = orig_labels == cid
+        if not mask.any():
+            results[cid] = {"stability_score": None, "stable": None}
+            continue
+        score = float(per_point_stability[mask].mean())
+        results[cid] = {"stability_score": round(score, 3), "stable": score >= threshold}
+
+    logger.info(f"Stability check ({n_runs} bootstrap runs, sample={sample_n:,}): "
+                f"mean ARI={np.mean(ari_scores):.3f}")
+    return results
+
+
+def check_priority_overlap(df: pd.DataFrame, threshold: float = 0.9) -> dict:
+    """
+    Flags a cluster if it's dominated by a single priority tier — a sign the
+    segment may just be re-deriving the priority bucket rather than adding
+    new commercial insight. Deterministic — no LLM call.
+    """
+    cluster_ids = sorted(df["cluster"].unique())
+    priority_col = "priority" if "priority" in df.columns else (
+        "priority_bucket" if "priority_bucket" in df.columns else None)
+    if priority_col is None:
+        return {cid: {"dominant_priority": None, "dominant_priority_share": None,
+                      "priority_overlap_flag": False} for cid in cluster_ids}
+
+    results = {}
+    for cid in cluster_ids:
+        subset = df.loc[df["cluster"] == cid, priority_col].dropna()
+        if len(subset) == 0:
+            results[cid] = {"dominant_priority": None, "dominant_priority_share": None,
+                            "priority_overlap_flag": False}
+            continue
+        vc = subset.value_counts(normalize=True)
+        top_share = float(vc.iloc[0])
+        results[cid] = {
+            "dominant_priority": vc.index[0],
+            "dominant_priority_share": round(top_share, 3),
+            "priority_overlap_flag": top_share >= threshold,
+        }
+    return results
+
+
+def critique_label_plausibility(profile: dict, label_info: dict, api_key: str,
+                                model: str = "claude-opus-4-6") -> dict:
+    """
+    Challenge Agent plausibility critique: one LLM call where the model checks
+    its own proposed label against the cluster's actual stats and flags
+    mismatches (e.g. a "Premium" label on a below-universe-VPO cluster).
+    Instructed not to be agreeable by default.
+    """
+    profile_block = _profile_to_prompt_block(profile)
+    prompt = f"""You proposed this label for a retail outlet segment. Check it against the data
+and flag any mismatch — do not be agreeable by default; a real mismatch should lower confidence.
+
+PROPOSED LABEL: {label_info.get('label', '')}
+CHANNEL: {label_info.get('channel', '')}
+OCCASION: {label_info.get('occasion', '')}
+DESCRIPTION: {label_info.get('description', '')}
+STATED CONFIDENCE: {label_info.get('confidence', 'Medium')}
+STATED RATIONALE: {label_info.get('why_this_segment_exists', '')}
+
+CLUSTER DATA:
+{profile_block}
+TOP DIFFERENTIATORS: {profile.get('top_differentiators', [])}
+SIZE ANOMALY: {profile.get('size_anomaly_flag')}
+
+Return ONLY a JSON object, no prose, no markdown fences:
+{{
+  "plausible": true|false,
+  "issue": "<one sentence describing the mismatch, or empty string if none>",
+  "revised_confidence": "High"|"Medium"|"Low"
+}}
+"""
+    try:
+        text = call_llm(prompt, api_key, model, max_tokens=400,
+                        system_prompt=_ctx.build("segmentation"))
+        clean = re.sub(r'^```[a-zA-Z]*\s*', '', text.strip())
+        clean = re.sub(r'\s*```$', '', clean.rstrip())
+        data = json.loads(clean)
+        return {
+            "plausible": bool(data.get("plausible", True)),
+            "issue": str(data.get("issue", "") or ""),
+            "revised_confidence": data.get("revised_confidence", label_info.get("confidence", "Medium")),
+        }
+    except Exception as e:
+        logger.warning(f"Plausibility critique failed for cluster "
+                       f"{profile.get('cluster_id')}: {type(e).__name__}: {e}")
+        return {"plausible": True, "issue": "",
+                "revised_confidence": label_info.get("confidence", "Medium")}
+
+
+def _empty_validation_flags() -> dict:
+    return {
+        "stability_score": None, "stable": None,
+        "dominant_priority": None, "dominant_priority_share": None,
+        "priority_overlap_flag": False,
+        "plausible": True, "plausibility_issue": "",
+        "revised_confidence": None,
+        "weak_or_non_actionable": False, "weak_reasons": [],
+    }
+
+
+def run_challenge_validation(
+    df: pd.DataFrame, feature_cols: list, config: dict,
+    profiles: List[dict], labels: dict,
+    api_key: str, model: str = "claude-opus-4-6",
+    use_llm: bool = True,
+) -> dict:
+    """
+    Runs all three Challenge Agent checks and combines them into one
+    `validation_flags` dict per cluster. Deterministic checks (stability,
+    priority overlap) always run; the LLM plausibility critique runs when
+    use_llm is True. Never raises — any failure degrades to an "unvalidated"
+    flag set rather than blocking the pipeline (soft-gate governance model).
+    """
+    profile_by_id = {p["cluster_id"]: p for p in profiles}
+
+    try:
+        stability = run_stability_check(df, feature_cols, config)
+    except Exception as e:
+        logger.warning(f"Stability check failed ({type(e).__name__}: {e}) — skipping")
+        stability = {cid: {"stability_score": None, "stable": None} for cid in profile_by_id}
+
+    try:
+        priority_overlap = check_priority_overlap(df)
+    except Exception as e:
+        logger.warning(f"Priority overlap check failed ({type(e).__name__}: {e}) — skipping")
+        priority_overlap = {cid: {"dominant_priority": None, "dominant_priority_share": None,
+                                   "priority_overlap_flag": False} for cid in profile_by_id}
+
+    plausibility = {}
+    if use_llm:
+        max_workers = min(int(os.getenv("SEGMENT_SUMMARY_MAX_WORKERS", "3")), len(profile_by_id))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(critique_label_plausibility, profile_by_id[cid],
+                                labels.get(cid, {}), api_key, model): cid
+                for cid in profile_by_id
+            }
+            for future in as_completed(futures):
+                cid = futures[future]
+                try:
+                    plausibility[cid] = future.result()
+                except Exception as e:
+                    logger.warning(f"Plausibility critique task failed for cluster {cid}: {e}")
+                    plausibility[cid] = {"plausible": True, "issue": "",
+                                         "revised_confidence": labels.get(cid, {}).get("confidence", "Medium")}
+    else:
+        plausibility = {cid: {"plausible": True, "issue": "",
+                              "revised_confidence": labels.get(cid, {}).get("confidence", "Medium")}
+                        for cid in profile_by_id}
+
+    flags = {}
+    for cid in sorted(df["cluster"].unique()):
+        stab = stability.get(cid, {})
+        prio = priority_overlap.get(cid, {})
+        plaus = plausibility.get(cid, {})
+
+        weak_reasons = []
+        if stab.get("stable") is False:
+            weak_reasons.append(f"low cluster stability ({stab.get('stability_score')})")
+        if prio.get("priority_overlap_flag"):
+            share = prio.get("dominant_priority_share") or 0
+            weak_reasons.append(
+                f"{share:.0%} single priority tier ({prio.get('dominant_priority')})")
+        if plaus.get("plausible") is False:
+            weak_reasons.append(plaus.get("issue") or "label plausibility issue")
+
+        flags[cid] = {
+            "stability_score": stab.get("stability_score"),
+            "stable": stab.get("stable"),
+            "dominant_priority": prio.get("dominant_priority"),
+            "dominant_priority_share": prio.get("dominant_priority_share"),
+            "priority_overlap_flag": prio.get("priority_overlap_flag", False),
+            "plausible": plaus.get("plausible", True),
+            "plausibility_issue": plaus.get("issue", ""),
+            "revised_confidence": plaus.get("revised_confidence"),
+            "weak_or_non_actionable": bool(weak_reasons),
+            "weak_reasons": weak_reasons,
+        }
+    return flags
+
+
+# ── Activation hook — execution hypothesis ───────────────────────────────────
+# A lightweight stand-in for a dedicated Activation Agent: converts the
+# label + action into one testable, KPI-bearing hypothesis. MSL and Space
+# Allocation consume the segment label/action directly (see msl_generator.py,
+# space_allocation_agent.py); no outcome data exists yet to make this
+# adaptive, so it stays a deterministic template for now (see run-history log
+# in pipeline.py for where that feedback loop would attach later).
+
+def build_execution_hypothesis(label_info: dict, profile: dict) -> str:
+    action = (label_info.get("action") or "").strip()
+    if not action:
+        return "Insufficient action data to form a hypothesis — review manually."
+    diffs = profile.get("top_differentiators") or []
+    basis = f"driven by {diffs[0]['feature']} ({diffs[0]['pct_deviation']:+.0f}% vs. universe)" \
+        if diffs else "based on the segment profile"
+    return (
+        f"If we execute '{action}' across this segment ({basis}), "
+        f"expect measurable VPO/NSV uplift within one quarter vs. control stores."
+    )
 
 
 # ── Rich per-segment multi-dimensional summaries ────────────────────────────
@@ -945,31 +1467,50 @@ def run_segmentation(df: pd.DataFrame, config: dict, api_key: str,
                      model: str = "claude-opus-4-6",
                      dq_context: Optional[str] = None,
                      priority_context: Optional[str] = None,
+                     run_id: Optional[str] = None,
                      ) -> Tuple[pd.DataFrame, dict]:
     """
     Full segmentation for flat outlet-level data.
     Returns (df_with_cluster_labels, segment_labels_dict).
+
+    labels[cid] additionally carries (soft-governance framework):
+      confidence, why_this_segment_exists  — Interpretation stage (Meaning & Labels)
+      validation                           — Challenge & Validation stage flags
+      execution_hypothesis                 — Activation stage hook
     """
     seg_cfg = config.get("segmentation", {})
     n_clusters = seg_cfg.get("n_clusters", 6)
     random_state = seg_cfg.get("random_state", 42)
 
+    if run_id:
+        logger.info(f"[run_id={run_id}] Starting segmentation")
+
     # Step 1: Feature engineering
     logger.info("Engineering features...")
     df, feature_cols = engineer_features(df, config)
 
-    # Step 2: KMeans clustering
+    # Step 2: KMeans clustering (deterministic core — stays in control)
     logger.info(f"Running KMeans with {n_clusters} clusters on {len(df):,} outlets...")
     df, model_obj = run_kmeans(df, feature_cols, n_clusters, random_state)
 
-    # Step 3: Build cluster profiles
+    # Step 3: Build cluster profiles + Cluster-Diagnosis extras
+    # (differentiators, nearest-cluster/silhouette, size-anomaly flags — all
+    # deterministic, no LLM calls)
     logger.info("Building cluster profiles...")
     profiles = build_cluster_profiles(df, feature_cols, config)
+    profiles = _add_top_differentiators(profiles)
+    try:
+        diagnostics = compute_cluster_diagnostics(df, feature_cols, model_obj, config)
+        for p in profiles:
+            p.update(diagnostics.get(p["cluster_id"], {}))
+    except Exception as e:
+        logger.warning(f"Cluster diagnostics skipped ({type(e).__name__}: {e})")
 
-    # Step 4: LLM labeling + rich multi-dimensional summaries
+    # Step 4: LLM labeling (Context Enrichment + Meaning & Labels) + rich summaries
     fallback_labels = {
         i: {"label": f"Segment {i}", "description": "Auto-generated",
-            "action": "Review manually", **_empty_rich_summary()}
+            "action": "Review manually", "confidence": "Low",
+            "why_this_segment_exists": "", **_empty_rich_summary()}
         for i in range(n_clusters)
     }
 
@@ -991,7 +1532,8 @@ def run_segmentation(df: pd.DataFrame, config: dict, api_key: str,
                 f"using auto-generated labels"
             )
             labels = {cid: {k: v for k, v in info.items()
-                            if k in ("label", "description", "action")}
+                            if k in ("label", "description", "action",
+                                    "confidence", "why_this_segment_exists")}
                       for cid, info in fallback_labels.items()}
 
         logger.info("Requesting concise per-segment cards (single call)...")
@@ -1007,14 +1549,52 @@ def run_segmentation(df: pd.DataFrame, config: dict, api_key: str,
             )
             cards = {p["cluster_id"]: _empty_card(labels.get(p["cluster_id"], {}))
                      for p in profiles}
+
+        # Step 5: Challenge & Validation — deterministic stability/priority-overlap
+        # checks + an LLM plausibility critique. Soft gate: flags are attached to
+        # `labels` for output_agent to render as a review banner; never blocks.
+        logger.info("Running Challenge & Validation checks...")
+        try:
+            validation_flags = run_challenge_validation(
+                df, feature_cols, config, profiles, labels,
+                api_key, model, use_llm=True,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Challenge & Validation failed ({type(e).__name__}: {e}) — "
+                f"segments left unvalidated"
+            )
+            validation_flags = {p["cluster_id"]: _empty_validation_flags() for p in profiles}
+
+        for cid, flags in validation_flags.items():
+            if cid not in labels:
+                continue
+            labels[cid]["validation"] = flags
+            # A plausibility critique can downgrade (never silently upgrade) confidence.
+            revised = flags.get("revised_confidence")
+            if revised and revised != labels[cid].get("confidence"):
+                logger.info(
+                    f"Cluster {cid}: confidence revised "
+                    f"{labels[cid].get('confidence')} → {revised} by plausibility critique"
+                )
+                labels[cid]["confidence"] = revised
+
+        # Step 6: Activation hook — one execution hypothesis per segment
+        profile_by_id = {p["cluster_id"]: p for p in profiles}
+        for cid, info in labels.items():
+            if cid in profile_by_id:
+                info["execution_hypothesis"] = build_execution_hypothesis(info, profile_by_id[cid])
     else:
         logger.warning(
             "LLM not configured (no API key and LLM_BACKEND!=local) — "
-            "skipping segment labeling and cards"
+            "skipping segment labeling, cards, and Challenge & Validation"
         )
         labels = {cid: {"label": info["label"],
                         "description": info["description"],
-                        "action": info["action"]}
+                        "action": info["action"],
+                        "confidence": info["confidence"],
+                        "why_this_segment_exists": info["why_this_segment_exists"],
+                        "validation": _empty_validation_flags()}
                   for cid, info in fallback_labels.items()}
         cards = {cid: _empty_card(labels.get(cid, {})) for cid in range(n_clusters)}
 
@@ -1033,5 +1613,9 @@ def run_segmentation(df: pd.DataFrame, config: dict, api_key: str,
         lambda c: labels.get(c, {}).get("description", ""))
     df["segment_action"] = df["cluster"].map(
         lambda c: labels.get(c, {}).get("action", ""))
+    df["segment_confidence"] = df["cluster"].map(
+        lambda c: labels.get(c, {}).get("confidence", ""))
+    df["segment_review_flag"] = df["cluster"].map(
+        lambda c: bool(labels.get(c, {}).get("validation", {}).get("weak_or_non_actionable")))
 
     return df, labels

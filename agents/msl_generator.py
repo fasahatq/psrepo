@@ -344,12 +344,22 @@ def _fallback_msl_selection(product_list: list) -> None:
 
 def llm_msl_selection(bucket_name: str, product_list: list,
                       api_key: str, model: str,
-                      cluster_info: str = "") -> list:
+                      cluster_info: str = "",
+                      priority_hint: str = None) -> list:
     """
     Makes an LLM call to classify each SKU as Hero / Strategic / not-in-MSL,
     grounded in the MSL context rules and the product-level data.
     Modifies product_list in-place and returns it.
     Falls back to _fallback_msl_selection() on any error.
+
+    bucket_name    : display name used in the prompt (a plain priority letter
+                     like "A", or a segment name like "Seg 0 — Urban Kirana...").
+    priority_hint  : the priority letter (A/B/C/D, optionally with a "+") that
+                     drives MSL sizing rules. When grouping by segment,
+                     bucket_name is no longer itself a priority letter, so the
+                     caller passes the segment's dominant priority tier here.
+                     Falls back to deriving it from bucket_name (old behaviour)
+                     when not provided.
     """
     import sys as _sys
     _sys.path.insert(0, PROJECT_ROOT)
@@ -360,9 +370,11 @@ def llm_msl_selection(bucket_name: str, product_list: list,
         _fallback_msl_selection(product_list)
         return product_list
 
-    base_bucket = bucket_name.rstrip("+").upper()[:1]
+    base_bucket = (priority_hint or bucket_name).rstrip("+").upper()[:1]
     profile_label, profile_desc = _BUCKET_PROFILES.get(
-        base_bucket, (f"Priority Bucket {bucket_name}", "Standard MSL rules apply."))
+        base_bucket, (f"Segment profile for {bucket_name}",
+                      "Standard MSL rules apply — size and composition should reflect "
+                      "the segment's revenue tier and shopper mission."))
 
     # Build product table (top 60 SKUs to stay within token budget)
     header = "RANK | PRODUCT | PPG | BRAND | % MIX | CUM MIX | % STORES | INDEX"
@@ -380,7 +392,7 @@ def llm_msl_selection(bucket_name: str, product_list: list,
 
     cluster_block = f"\nCLUSTER CONTEXT:\n{cluster_info}\n" if cluster_info else ""
 
-    prompt = f"""You are selecting the Must Stock List (MSL) for Priority Bucket {bucket_name}.
+    prompt = f"""You are selecting the Must Stock List (MSL) for: {bucket_name}.
 
 BUCKET PROFILE: {profile_label}
 {profile_desc}
@@ -451,8 +463,16 @@ Rules:
 # ============================================================
 
 def write_bucket_sheet(wb, bucket_name, product_list, brand_data, ppg_data,
-                       ppg_order, brands_order, avg_sku):
-    ws = wb.create_sheet(title=f"Bucket {bucket_name}"[:31])
+                       ppg_order, brands_order, avg_sku,
+                       sheet_title=None, segment_row_label=None, extra_meta=None):
+    """
+    extra_meta (optional): {"dominant_priority", "confidence", "weak_flag",
+    "weak_reason"} — when provided, renders a governance banner in row 1
+    (soft gate: informational only, never blocks the workbook from being
+    produced) surfacing the Challenge Agent's validation flags for a human
+    reviewer.
+    """
+    ws = wb.create_sheet(title=(sheet_title or f"Bucket {bucket_name}")[:31])
 
     n_pp = len(ppg_order)
 
@@ -480,11 +500,32 @@ def write_bucket_sheet(wb, bucket_name, product_list, brand_data, ppg_data,
     def pp_col(i):  return 5 + i
     def msl_col(i): return msl_offset + i
 
+    # ── Optional row 1: Challenge-Agent governance banner ────────────────────
+    # Additive-only: when extra_meta is absent, R stays 1 and every row below
+    # renders at exactly the same position as before this feature existed.
     R = 1
+    if extra_meta:
+        bits = []
+        if extra_meta.get("dominant_priority"):
+            bits.append(f"Dominant priority: {extra_meta['dominant_priority']}")
+        if extra_meta.get("confidence"):
+            bits.append(f"AI confidence: {extra_meta['confidence']}")
+        if extra_meta.get("weak_flag"):
+            reason = extra_meta.get("weak_reason") or "see Challenge Agent flags"
+            bits.append(f"⚠ REVIEW RECOMMENDED — {reason}")
+        if bits:
+            is_weak = bool(extra_meta.get("weak_flag"))
+            write_cell(ws, 1, 2, "  |  ".join(bits), bold=True,
+                       bg_color=C_RED if is_weak else C_LIGHT_BLUE,
+                       fnt_color=C_WHITE if is_weak else C_BLACK,
+                       h_align="left", wrap=True)
+            ws.merge_cells(start_row=1, start_column=2, end_row=1, end_column=6)
+            ws.row_dimensions[1].height = 28
+            R = 2
 
-    # ── Rows R1-R3: Bucket / Country / AvgSKU ────────────────────────────────
+    # ── Rows R..R+2: Segment / Country / AvgSKU ───────────────────────────────
     for lr, label, val in [
-        (R,   "Segment",  f"Priority Bucket {bucket_name}"),
+        (R,   "Segment",  segment_row_label or f"Priority Bucket {bucket_name}"),
         (R+1, "Country",  "India"),
         (R+2, "Avg SKU",  avg_sku),
     ]:
@@ -686,12 +727,17 @@ def write_bucket_sheet(wb, bucket_name, product_list, brand_data, ppg_data,
     )
     ws.print_title_rows = f"{PROD_R}:{PROD_R}"
 
-    print(f"  [Bucket {bucket_name}] {len(product_list)} products | avg SKU/store: {avg_sku}")
+    print(f"  [{bucket_name}] {len(product_list)} products | avg SKU/store: {avg_sku}")
 
 
 # ============================================================
 # 5. PIPELINE ENTRY POINT (called from pipeline.py)
 # ============================================================
+
+def _dominant_value(series: pd.Series):
+    vc = series.dropna().value_counts()
+    return vc.index[0] if len(vc) else None
+
 
 def run_msl_from_df(df_segments, sku_path: str, output_dir: str,
                     api_key: str = None, model: str = None,
@@ -699,13 +745,17 @@ def run_msl_from_df(df_segments, sku_path: str, output_dir: str,
     """
     Pipeline-integrated MSL generation.
 
-    Takes the in-memory segments DataFrame (must already carry OUTLET_UID_EDITED
-    and priority_bucket from the prioritization step), joins with the SKU data
-    file, and writes one MSL sheet per priority bucket to output_dir.
+    Activation-stage wiring: when the segments DataFrame carries a `cluster`
+    column (i.e. segmentation ran), MSL is grouped by SEGMENT — one sheet per
+    cluster — with each segment's dominant priority tier driving MSL sizing
+    rules (via `priority_hint`) and its Challenge-Agent validation flags
+    surfaced as a governance banner on the sheet. Falls back to the legacy
+    priority_bucket grouping when `cluster` isn't present (e.g. segmentation
+    was skipped upstream).
 
     api_key / model: when provided, an LLM call marks Hero vs Strategic SKUs.
-    labels: segment labels dict from run_segmentation() — used as cluster context
-            for the LLM reasoning prompt.
+    labels: segment labels dict from run_segmentation() — label/description/
+            confidence/validation/execution_hypothesis per cluster id.
 
     Returns the saved workbook path, or "" if generation is skipped.
     """
@@ -716,7 +766,10 @@ def run_msl_from_df(df_segments, sku_path: str, output_dir: str,
         log.warning(f"[MSL] SKU file not found: {sku_path} — skipping MSL generation")
         return ""
 
-    required = {"OUTLET_UID_EDITED", "priority_bucket"}
+    use_segment_grouping = "cluster" in df_segments.columns
+    group_col = "cluster" if use_segment_grouping else "priority_bucket"
+
+    required = {"OUTLET_UID_EDITED", group_col}
     missing = required - set(df_segments.columns)
     if missing:
         log.warning(f"[MSL] Missing columns in segments DataFrame: {missing} — skipping")
@@ -724,9 +777,11 @@ def run_msl_from_df(df_segments, sku_path: str, output_dir: str,
 
     sku = pd.read_csv(sku_path)
 
-    seg_slim = df_segments[["OUTLET_UID_EDITED", "priority_bucket"]].copy()
-    if "segment_label" in df_segments.columns:
-        seg_slim = df_segments[["OUTLET_UID_EDITED", "priority_bucket", "segment_label"]].copy()
+    keep_cols = ["OUTLET_UID_EDITED", group_col]
+    for extra in ("segment_label", "priority_bucket", "priority"):
+        if extra in df_segments.columns and extra not in keep_cols:
+            keep_cols.append(extra)
+    seg_slim = df_segments[keep_cols].copy()
     seg_slim["OUTLET_UID_EDITED"] = seg_slim["OUTLET_UID_EDITED"].astype(str).str.strip()
     sku["CUST_UNIQ_ID_VAL"] = sku["CUST_UNIQ_ID_VAL"].astype(str).str.strip()
 
@@ -741,51 +796,100 @@ def run_msl_from_df(df_segments, sku_path: str, output_dir: str,
         log.warning("[MSL] No matching outlets between SKU data and segments — skipping")
         return ""
 
-    buckets = sorted(joined["priority_bucket"].dropna().unique())
-    log.info(f"[MSL] Generating sheets for buckets: {buckets}")
+    groups = sorted(joined[group_col].dropna().unique())
+    log.info(f"[MSL] Generating sheets for {'segments (clusters)' if use_segment_grouping else 'priority buckets'}: {list(groups)}")
 
-    bucket_store_sets = {
-        b: set(seg_slim.loc[seg_slim["priority_bucket"] == b, "OUTLET_UID_EDITED"])
-        for b in buckets
+    group_store_sets = {
+        g: set(seg_slim.loc[seg_slim[group_col] == g, "OUTLET_UID_EDITED"])
+        for g in groups
     }
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
-    for bucket in buckets:
-        bucket_df = joined[joined["priority_bucket"] == bucket].copy()
+    for group in groups:
+        group_df = joined[joined[group_col] == group].copy()
         product_list, brand_data, ppg_data, ppg_order, brands_order, avg_sku = build_metrics(
-            bucket_df, joined, bucket_store_sets[bucket]
+            group_df, joined, group_store_sets[group]
         )
 
-        # Build cluster context string for this bucket
-        cluster_info = ""
-        if "segment_label" in seg_slim.columns:
-            top_segs = (
-                seg_slim.loc[seg_slim["priority_bucket"] == bucket, "segment_label"]
-                .value_counts().head(3)
-            )
-            cluster_info = "\n".join(
-                f"- {seg} ({cnt} stores)" for seg, cnt in top_segs.items()
-            )
-        elif labels:
-            cluster_lines = []
-            for cid, info in labels.items():
-                lbl = info.get("label", f"Cluster {cid}")
-                identity = (info.get("identity_card") or "")[:120].replace("\n", " ")
-                cluster_lines.append(f"- {lbl}: {identity}")
-            cluster_info = "\n".join(cluster_lines[:6])
+        if use_segment_grouping:
+            cid = int(group)
+            group_seg = seg_slim.loc[seg_slim[group_col] == group]
+            seg_label = None
+            if "segment_label" in group_seg.columns and len(group_seg):
+                seg_label = _dominant_value(group_seg["segment_label"])
+            info = (labels or {}).get(cid, {})
+            seg_label = seg_label or info.get("label", f"Segment {cid}")
+            segment_display = f"Seg {cid} — {seg_label}"
+            sheet_title = segment_display[:31]
 
-        if api_key:
-            llm_model = model or "claude-opus-4-6"
-            log.info(f"[MSL] LLM MSL selection for bucket {bucket} ...")
-            llm_msl_selection(bucket, product_list, api_key, llm_model,
-                              cluster_info=cluster_info)
+            dominant_priority = None
+            if "priority" in group_seg.columns:
+                dominant_priority = _dominant_value(group_seg["priority"])
+            elif "priority_bucket" in group_seg.columns:
+                dominant_priority = _dominant_value(group_seg["priority_bucket"])
+
+            validation = info.get("validation", {}) or {}
+            extra_meta = {
+                "dominant_priority": dominant_priority,
+                "confidence": info.get("confidence"),
+                "weak_flag": bool(validation.get("weak_or_non_actionable")),
+                "weak_reason": "; ".join(validation.get("weak_reasons", []) or []),
+            }
+
+            cluster_info_lines = []
+            if info.get("description"):
+                cluster_info_lines.append(f"Segment description: {info['description']}")
+            if info.get("why_this_segment_exists"):
+                cluster_info_lines.append(f"Why this segment exists: {info['why_this_segment_exists']}")
+            if dominant_priority:
+                cluster_info_lines.append(f"Dominant priority tier: {dominant_priority}")
+            cluster_info = "\n".join(cluster_info_lines)
+
+            if api_key:
+                llm_model = model or "claude-opus-4-6"
+                log.info(f"[MSL] LLM MSL selection for {segment_display} ...")
+                llm_msl_selection(segment_display, product_list, api_key, llm_model,
+                                  cluster_info=cluster_info, priority_hint=dominant_priority)
+            else:
+                _fallback_msl_selection(product_list)
+
+            write_bucket_sheet(wb, segment_display, product_list, brand_data, ppg_data,
+                               ppg_order, brands_order, avg_sku,
+                               sheet_title=sheet_title, segment_row_label=segment_display,
+                               extra_meta=extra_meta)
         else:
-            _fallback_msl_selection(product_list)
+            # Legacy path — grouping directly by priority_bucket (segmentation
+            # was skipped upstream). Unchanged from prior behaviour.
+            bucket = group
+            cluster_info = ""
+            if "segment_label" in seg_slim.columns:
+                top_segs = (
+                    seg_slim.loc[seg_slim[group_col] == bucket, "segment_label"]
+                    .value_counts().head(3)
+                )
+                cluster_info = "\n".join(
+                    f"- {seg} ({cnt} stores)" for seg, cnt in top_segs.items()
+                )
+            elif labels:
+                cluster_lines = []
+                for cid, info in labels.items():
+                    lbl = info.get("label", f"Cluster {cid}")
+                    identity = (info.get("identity_card") or "")[:120].replace("\n", " ")
+                    cluster_lines.append(f"- {lbl}: {identity}")
+                cluster_info = "\n".join(cluster_lines[:6])
 
-        write_bucket_sheet(wb, bucket, product_list, brand_data, ppg_data,
-                           ppg_order, brands_order, avg_sku)
+            if api_key:
+                llm_model = model or "claude-opus-4-6"
+                log.info(f"[MSL] LLM MSL selection for bucket {bucket} ...")
+                llm_msl_selection(bucket, product_list, api_key, llm_model,
+                                  cluster_info=cluster_info)
+            else:
+                _fallback_msl_selection(product_list)
+
+            write_bucket_sheet(wb, bucket, product_list, brand_data, ppg_data,
+                               ppg_order, brands_order, avg_sku)
 
     os.makedirs(output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -829,62 +933,14 @@ def main():
     if not os.path.exists(SKU_CSV):
         sys.exit(f"SKU file not found: {SKU_CSV}")
 
-    # -- Load & join -----------------------------------------------------------
-    joined = load_data(seg_path, SKU_CSV)
-    print(f"Joined rows       : {len(joined):,}")
-
-    # -- Determine buckets (sorted A, B, C, D ...) ----------------------------
-    buckets = sorted(joined["priority_bucket"].dropna().unique())
-    print(f"Priority buckets  : {buckets}")
-
-    # Store sets per bucket (from full segmentation, not just joined rows)
-    seg_full = pd.read_csv(seg_path, low_memory=False)
-    seg_full["OUTLET_UID_EDITED"] = seg_full["OUTLET_UID_EDITED"].astype(str).str.strip()
-    bucket_store_sets = {
-        b: set(seg_full.loc[seg_full["priority_bucket"] == b, "OUTLET_UID_EDITED"])
-        for b in buckets
-    }
-
-    # Cluster context (segment_label from segmentation CSV if present)
-    has_labels = "segment_label" in seg_full.columns
-
-    # -- Build workbook --------------------------------------------------------
-    wb = openpyxl.Workbook()
-    wb.remove(wb.active)   # remove default blank sheet
-
-    for bucket in buckets:
-        bucket_df = joined[joined["priority_bucket"] == bucket].copy()
-        product_list, brand_data, ppg_data, ppg_order, brands_order, avg_sku = build_metrics(
-            bucket_df, joined, bucket_store_sets[bucket]
-        )
-
-        cluster_info = ""
-        if has_labels:
-            top_segs = (
-                seg_full.loc[seg_full["priority_bucket"] == bucket, "segment_label"]
-                .value_counts().head(3)
-            )
-            cluster_info = "\n".join(
-                f"- {seg} ({cnt} stores)" for seg, cnt in top_segs.items()
-            )
-
-        if api_key:
-            print(f"  [Bucket {bucket}] Running LLM MSL selection...")
-            llm_msl_selection(bucket, product_list, api_key, model,
-                              cluster_info=cluster_info)
-        else:
-            print(f"  [Bucket {bucket}] No API key — using data-driven fallback")
-            _fallback_msl_selection(product_list)
-
-        write_bucket_sheet(
-            wb, bucket, product_list, brand_data, ppg_data,
-            ppg_order, brands_order, avg_sku,
-        )
-
-    # -- Save ------------------------------------------------------------------
-    timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = os.path.join(OUTPUTS_DIR, f"MSL_Priority_Buckets_{timestamp}.xlsx")
-    wb.save(output_path)
+    # Delegate to the pipeline-integrated path so standalone runs and pipeline
+    # runs share exactly one code path (segment-grouped when the CSV carries
+    # a `cluster` column, priority-bucket-grouped otherwise).
+    df_segments = pd.read_csv(seg_path, low_memory=False)
+    output_path = run_msl_from_df(df_segments, SKU_CSV, OUTPUTS_DIR,
+                                  api_key=api_key, model=model)
+    if not output_path:
+        sys.exit("[FAIL] MSL generation skipped (see warnings above).")
     print(f"\n[OK] Saved: {output_path}")
 
 

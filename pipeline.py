@@ -389,15 +389,34 @@ def run_pipeline(file_path: str, project_root: str = None,
     df_out, labels = run_segmentation(
         df_out, config, api_key, model,
         dq_context=dq_context, priority_context=priority_context,
+        run_id=run_id,
     )
 
     n_segments = df_out["cluster"].nunique()
+    n_flagged = sum(
+        1 for info in labels.values()
+        if (info.get("validation") or {}).get("weak_or_non_actionable")
+    )
     _notify(progress_callback, 4, "Segmentation", "done",
-            detail=f"{n_segments} segments / {len(df_out):,} outlets")
+            detail=f"{n_segments} segments / {len(df_out):,} outlets"
+                   + (f" | {n_flagged} flagged for review" if n_flagged else ""))
     logger.info(f"Segmentation complete: {n_segments} segments across {len(df_out):,} outlets")
     for cid, info in labels.items():
         cnt = (df_out["cluster"] == cid).sum()
-        logger.info(f"  Cluster {cid} ({cnt:,} outlets): {info.get('label', '?')}")
+        conf = info.get("confidence", "?")
+        flag = " ⚠ FLAGGED" if (info.get("validation") or {}).get("weak_or_non_actionable") else ""
+        logger.info(f"  Cluster {cid} ({cnt:,} outlets): {info.get('label', '?')} "
+                    f"[confidence={conf}]{flag}")
+    if n_flagged:
+        logger.warning(
+            f"Challenge & Validation flagged {n_flagged}/{n_segments} segment(s) for "
+            f"human review (soft gate — pipeline continues; see PDF/Excel banners)."
+        )
+
+    # Run-history log — substrate for a future learning loop (no outcome data
+    # exists yet to make this adaptive; see agents/segmentation_agent.py
+    # build_execution_hypothesis docstring).
+    _log_segment_history(run_id, log_dir, labels)
 
     # ── Step 5: MSL Generation ────────────────────────────────────────────
     logger.info("Step 5/7 — MSL Generation")
@@ -459,6 +478,40 @@ def run_pipeline(file_path: str, project_root: str = None,
     _notify(progress_callback, 8, "complete", "done", detail=output_dir)
 
     return outputs
+
+
+def _log_segment_history(run_id: str, log_dir: str, labels: dict) -> None:
+    """
+    Appends one JSON record per run to logs/segment_history.jsonl: cluster
+    labels, confidence, and Challenge & Validation flags. This is the
+    Activation & Learning stage's run-history store — the substrate a future
+    feedback loop (which recommendations drove measured NSV uplift) would
+    read from. No outcome data exists yet, so nothing reads this file back
+    into prompts or context today; it only accumulates history.
+    """
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        record = {
+            "run_id": run_id,
+            "timestamp": datetime.now().isoformat(),
+            "segments": [
+                {
+                    "cluster_id": cid,
+                    "label": info.get("label"),
+                    "confidence": info.get("confidence"),
+                    "why_this_segment_exists": info.get("why_this_segment_exists"),
+                    "execution_hypothesis": info.get("execution_hypothesis"),
+                    "validation": info.get("validation"),
+                }
+                for cid, info in labels.items()
+            ],
+        }
+        history_path = os.path.join(log_dir, "segment_history.jsonl")
+        with open(history_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, default=str) + "\n")
+        logger.info(f"Segment run-history appended: {history_path}")
+    except Exception as e:
+        logger.warning(f"Segment run-history logging skipped ({type(e).__name__}: {e})")
 
 
 def _build_dq_context(dq_results: list, df: pd.DataFrame) -> str:

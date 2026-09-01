@@ -394,6 +394,9 @@ def write_excel_workbook(df: pd.DataFrame, labels: dict, output_dir: str) -> str
                 if col in subset.columns:
                     row[alias] = round(subset[col].mean(), 1)
             row["Recommended Action"] = label_info.get("action", "")
+            validation = label_info.get("validation", {}) or {}
+            row["Confidence"] = label_info.get("confidence", "")
+            row["Review Flag"] = "⚠ REVIEW" if validation.get("weak_or_non_actionable") else ""
             summary_data.append(row)
 
         summary_df = pd.DataFrame(summary_data)
@@ -403,6 +406,16 @@ def write_excel_workbook(df: pd.DataFrame, labels: dict, output_dir: str) -> str
         for col_num, col_name in enumerate(summary_df.columns):
             summary_ws.write(0, col_num, col_name, header_fmt)
             summary_ws.set_column(col_num, col_num, max(15, len(col_name) + 4))
+
+        if "Review Flag" in summary_df.columns:
+            flag_col_idx = list(summary_df.columns).index("Review Flag")
+            review_fmt = workbook.add_format({"bg_color": "#FDEDEC",
+                                              "font_color": "#C0392B", "bold": True})
+            summary_ws.conditional_format(
+                1, flag_col_idx, len(summary_df), flag_col_idx,
+                {"type": "text", "criteria": "containing", "value": "REVIEW",
+                 "format": review_fmt},
+            )
 
         # ── VPO bar chart ─────────────────────────────────────────────────
         n_rows = len(summary_data)
@@ -619,10 +632,13 @@ def write_pdf_report(rfm: pd.DataFrame, labels: dict, dq_report: str,
     cols = ["Segment", "Label", "Outlets", "% Total"]
     if vpo_col:
         cols += ["Avg VPO (₹)", "Avg SKUs"]
+    cols += ["Confidence", "Flag"]
     table_data = [cols]
-    for cid in sorted(rfm["cluster"].unique()):
+    flagged_rows = []   # 1-based data-row indices (row 0 is the header)
+    for ri, cid in enumerate(sorted(rfm["cluster"].unique()), start=1):
         subset = rfm[rfm["cluster"] == cid]
         label_info = labels.get(cid, {})
+        validation = label_info.get("validation", {}) or {}
         row = [
             str(cid),
             label_info.get("label", f"Segment {cid}")[:38],
@@ -633,10 +649,15 @@ def write_pdf_report(rfm: pd.DataFrame, labels: dict, dq_report: str,
             row.append(f"₹{subset[vpo_col].mean():,.0f}")
         if "AVG_SKU" in subset.columns:
             row.append(f"{subset['AVG_SKU'].mean():.1f}")
+        row.append(label_info.get("confidence", ""))
+        if validation.get("weak_or_non_actionable"):
+            row.append("⚠ Review")
+            flagged_rows.append(ri)
+        else:
+            row.append("")
         table_data.append(row)
 
-    t = Table(table_data, repeatRows=1)
-    t.setStyle(TableStyle([
+    table_style_cmds = [
         ("BACKGROUND", (0, 0), (-1, 0), HexColor("#004B87")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTSIZE", (0, 0), (-1, 0), 9),
@@ -646,9 +667,20 @@ def write_pdf_report(rfm: pd.DataFrame, labels: dict, dq_report: str,
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, HexColor("#F0F4F8")]),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]))
+    ]
+    for ri in flagged_rows:
+        table_style_cmds.append(("BACKGROUND", (0, ri), (-1, ri), HexColor("#FDEDEC")))
+    t = Table(table_data, repeatRows=1)
+    t.setStyle(TableStyle(table_style_cmds))
     story.append(t)
     story.append(Spacer(1, 16))
+    if flagged_rows:
+        story.append(Paragraph(
+            "⚠ Segments flagged above were challenged by the Challenge & Validation "
+            "agent (low stability, priority-tier overlap, or a label plausibility "
+            "issue) — recommended for human review before activation.",
+            body_style))
+        story.append(Spacer(1, 12))
 
     # ── Priority Section ──────────────────────────────────────────────────
     if "priority" in rfm.columns:
@@ -732,6 +764,29 @@ def write_pdf_report(rfm: pd.DataFrame, labels: dict, dq_report: str,
             f"Segment {cid}: {label_info.get('label', 'Unnamed')}", label_style))
         story.append(Paragraph(label_info.get("description", ""), body_style))
 
+        # ── Governance: confidence, evidence, and Challenge Agent flags ──────
+        confidence = label_info.get("confidence")
+        validation = label_info.get("validation", {}) or {}
+        why = label_info.get("why_this_segment_exists", "")
+        if confidence:
+            conf_color = {"High": "#1E8449", "Medium": "#B7950B",
+                         "Low": "#C0392B"}.get(confidence, "#555555")
+            story.append(Paragraph(
+                f'<font color="{conf_color}"><b>AI Confidence: {confidence}</b></font>',
+                body_style))
+        if why:
+            safe_why = (why.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+            story.append(Paragraph(f"<i>Why this segment exists:</i> {safe_why}", body_style))
+        if validation.get("weak_or_non_actionable"):
+            reasons = "; ".join(validation.get("weak_reasons", []) or []) or "see validation flags"
+            banner_style = ParagraphStyle(
+                "ReviewBanner", parent=styles["Normal"], fontSize=9,
+                textColor=colors.white, backColor=HexColor("#C0392B"),
+                borderPadding=6, spaceAfter=8)
+            story.append(Paragraph(
+                f"⚠ CHALLENGE AGENT FLAG — human review recommended: {reasons}",
+                banner_style))
+
         pct = len(subset) / n_outlets * 100
         details_parts = [f"<b>Outlets:</b> {len(subset):,} ({pct:.1f}% of total)"]
         if "VPO" in subset.columns:
@@ -747,6 +802,9 @@ def write_pdf_report(rfm: pd.DataFrame, labels: dict, dq_report: str,
         if label_info.get("action"):
             story.append(Paragraph(
                 f"<b>Recommended Action:</b> {label_info['action']}", body_style))
+        if label_info.get("execution_hypothesis"):
+            story.append(Paragraph(
+                f"<b>Execution Hypothesis:</b> {label_info['execution_hypothesis']}", body_style))
 
         # LLM-generated 7-section rich summary
         rich_order = [

@@ -147,12 +147,18 @@ def _overview_slide(prs, df, labels, output_dir):
           color=_PALETTE_INK)
 
     cids = sorted(df["cluster"].unique())
-    headers = ["Seg", "Label", "Channel", "Outlets", "% Univ", "Avg VPO", "Avg SKUs", "Growth"]
+    headers = ["Seg", "Label", "Channel", "Outlets", "% Univ", "Avg VPO", "Avg SKUs",
+               "Growth", "Confidence", "Flag"]
     rows = []
+    row_fills = []
+    n_flagged = 0
     for cid in cids:
         sub = df[df["cluster"] == cid]
         info = labels.get(int(cid), {})
         card = info.get("card") or {}
+        validation = info.get("validation") or {}
+        flagged = bool(validation.get("weak_or_non_actionable"))
+        n_flagged += int(flagged)
         rows.append([
             str(int(cid)),
             (info.get("label", f"Segment {cid}"))[:34],
@@ -162,14 +168,24 @@ def _overview_slide(prs, df, labels, output_dir):
             _rupees(_mean(sub, "VPO")),
             f"{_mean(sub, 'AVG_SKU'):.1f}" if _mean(sub, "AVG_SKU") is not None else "—",
             card.get("growth_potential", "") or "—",
+            info.get("confidence", "") or "—",
+            "⚠ Review" if flagged else "",
         ])
+        row_fills.append("FDEDEC" if flagged else None)
 
-    _table(s, 0.5, 1.1, 8.4, headers, rows,
-           col_widths=[0.5, 3.0, 1.0, 1.0, 0.9, 1.2, 1.0, 1.0])
+    _table(s, 0.5, 1.1, 9.9, headers, rows,
+           col_widths=[0.45, 2.5, 0.8, 0.9, 0.8, 1.1, 0.9, 0.9, 1.0, 0.85],
+           row_fills=row_fills)
+
+    if n_flagged:
+        _text(s, 0.5, 5.35, 9.9, 0.35,
+              f"⚠ {n_flagged} segment(s) flagged by the Challenge & Validation "
+              f"agent — recommended for human review before activation.",
+              size=10.5, color=RGBColor.from_string("C0392B"))
 
     bar = os.path.join(output_dir, "charts", "cluster_bar_overview.png")
     if os.path.exists(bar):
-        s.shapes.add_picture(bar, Inches(9.2), Inches(1.2), width=Inches(3.8))
+        s.shapes.add_picture(bar, Inches(10.9), Inches(1.2), width=Inches(2.1))
 
 
 def _priority_slide(prs, df):
@@ -215,12 +231,25 @@ def _segment_slide(prs, df, cid, info, radar_path):
 
     _text(s, 0.5, 0.32, 12.4, 0.7, f"Segment {int(cid)} — {label}",
           size=27, bold=True, color=RGBColor.from_string(colour))
+    confidence = info.get("confidence")
+    validation = info.get("validation") or {}
+    flagged = bool(validation.get("weak_or_non_actionable"))
     sub_bits = " · ".join(
         b for b in [info.get("channel", ""), info.get("occasion", ""),
-                    f"{len(sub):,} outlets ({pct:.1f}% of universe)"] if b)
+                    f"{len(sub):,} outlets ({pct:.1f}% of universe)",
+                    f"AI confidence: {confidence}" if confidence else ""] if b)
     _text(s, 0.5, 1.02, 12.4, 0.4, sub_bits, size=13, color=_MUTE)
 
-    if card.get("headline"):
+    # This slot holds exactly one line — the Challenge Agent flag takes
+    # priority over the card's optional headline so the two never stack and
+    # risk colliding with the stat table/radar below.
+    if flagged:
+        reasons = "; ".join(validation.get("weak_reasons", []) or []) or "see validation flags"
+        _text(s, 0.5, 1.42, 12.4, 0.4,
+              [[("⚠ CHALLENGE AGENT FLAG — ", {"bold": True, "size": 12.5}),
+                (f"human review recommended: {reasons}"[:170], {"size": 12.5})]],
+              color=RGBColor.from_string("C0392B"))
+    elif card.get("headline"):
         _text(s, 0.5, 1.42, 12.4, 0.45,
               [[(card["headline"], {"bold": True, "size": 14,
                                     "color": RGBColor.from_string(colour)})]])
@@ -287,7 +316,12 @@ def _segment_slide(prs, df, cid, info, radar_path):
 # ── table helper ─────────────────────────────────────────────────────────
 
 def _table(slide, x, y, total_w, headers, rows, *, col_widths=None,
-           header=True, compact=False):
+           header=True, compact=False, row_fills=None):
+    """
+    row_fills (optional): list aligned to `rows`, each entry either a hex
+    fill string overriding that row's banding (e.g. a Challenge & Validation
+    review highlight) or None to use the normal alternating banding.
+    """
     n_col = len(headers)
     n_row = len(rows) + (1 if header else 0)
     row_h = 0.28 if compact else 0.34
@@ -307,12 +341,14 @@ def _table(slide, x, y, total_w, headers, rows, *, col_widths=None,
                         fill="004B87")
         r0 = 1
     for i, row in enumerate(rows):
+        override = (row_fills[i] if row_fills and i < len(row_fills) else None)
         for j, val in enumerate(row):
             c = gt.cell(r0 + i, j)
             c.text = str(val)
             _style_cell(c, bold=(j == 0 and not header),
                         size=10 if not compact else 10.5,
-                        fill="F3F4F6" if (i % 2 == 0) else "FFFFFF")
+                        color=(RGBColor.from_string("C0392B") if override else _INK),
+                        fill=override or ("F3F4F6" if (i % 2 == 0) else "FFFFFF"))
     return gt
 
 

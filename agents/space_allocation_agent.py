@@ -1,7 +1,8 @@
 """
 Space Allocation Agent — converts segment MSL SKUs into rack-ready facing recommendations.
 
-For each priority bucket (A / B / C / D):
+For each group in the MSL workbook (a segment/cluster when segmentation ran —
+Activation-stage wiring — or a priority bucket A/B/C/D in the legacy path):
   1. Reads the latest MSL Excel (MSL_Priority_Buckets_*.xlsx from the most recent run)
   2. Joins MSL SKUs with physical pack dimensions (CPG_Pack_Dimensions_cm.xlsx)
   3. Evaluates available rack assets (CPG_Rack_Comparison.xlsx)
@@ -449,9 +450,13 @@ def calculate_assets_needed(df: pd.DataFrame, rack: dict) -> dict:
 # LLM recommendation
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_llm_prompt(bucket: str, df: pd.DataFrame,
+def build_llm_prompt(group_name: str, df: pd.DataFrame,
                      rack_name: str, rack: dict, summary: dict) -> str:
-    """Build the structured prompt for the LLM space allocation narrative."""
+    """
+    Build the structured prompt for the LLM space allocation narrative.
+    group_name is an opaque display string — either "Priority Bucket A" (legacy)
+    or a segment name like "Seg 0 — Urban Kirana..." (Activation-stage wiring).
+    """
 
     hero     = df[df["SKU_TYPE"] == "Hero"].sort_values("RANKING").head(8)
     strategic= df[df["SKU_TYPE"] == "Strategic"].sort_values("RANKING").head(8)
@@ -470,7 +475,7 @@ def build_llm_prompt(bucket: str, df: pd.DataFrame,
     )
 
     return f"""
-You are producing the final space allocation recommendation for Priority Bucket {bucket} stores.
+You are producing the final space allocation recommendation for: {group_name}.
 
 ## Rack Asset: {rack_name}
 - Size          : {rack['height_mm']:.0f} mm H × {rack['width_mm']:.0f} mm W × {rack['depth_mm']:.0f} mm D
@@ -572,13 +577,13 @@ def write_output(results: dict, msl_path: str, output_dir: str) -> str:
 
         summary_rows = []
 
-        for bucket, res in results.items():
+        for group_name, res in results.items():
             df        = res["df"]
             rack_name = res["rack_name"]
             rack      = res["rack"]
             asset_sum = res["asset_summary"]
             llm_text  = res["llm_recommendation"]
-            sheet     = f"Bucket {bucket}"
+            sheet     = group_name[:31]   # reuse the MSL sheet name directly
 
             # ── Prepare display DataFrame ────────────────────────────────────
             existing = [c for c in DISPLAY_COLS if c in df.columns]
@@ -593,7 +598,7 @@ def write_output(results: dict, msl_path: str, output_dir: str) -> str:
             ws = writer.sheets[sheet]
 
             # ── Metadata block ───────────────────────────────────────────────
-            ws.write(0, 0, f"Space Allocation — Priority Bucket {bucket}",  title_fmt)
+            ws.write(0, 0, f"Space Allocation — {group_name}",  title_fmt)
             ws.write(1, 0,
                 f"Rack: {rack_name}  |  "
                 f"Assets recommended: {asset_sum['assets_needed']}  |  "
@@ -625,7 +630,7 @@ def write_output(results: dict, msl_path: str, output_dir: str) -> str:
             ws.set_column(0, 0, max(80, ws.dim_colmax + 1))
 
             summary_rows.append({
-                "Bucket":             bucket,
+                "Segment":            group_name,
                 "Rack Type":          rack_name,
                 "Assets Recommended": asset_sum["assets_needed"],
                 "SKUs Placed":        asset_sum["skus_placed"],
@@ -681,8 +686,13 @@ def run_space_allocation(
     output_dir = output_dir or os.path.dirname(msl_path)
     logger.info(f"MSL file : {msl_path}")
 
-    xl      = pd.ExcelFile(msl_path)
-    buckets = [s for s in xl.sheet_names if s.lower().startswith("bucket")]
+    xl     = pd.ExcelFile(msl_path)
+    # "Bucket ..." sheets (legacy priority-bucket grouping) or "Seg ..." sheets
+    # (Activation-stage segment grouping — see msl_generator.py) are both
+    # honoured; the sheet name itself is used as the opaque group identifier
+    # throughout, so no bucket-letter parsing is needed either way.
+    sheets = [s for s in xl.sheet_names
+             if s.lower().startswith("bucket") or s.lower().startswith("seg")]
 
     # Pick the primary rack (first = Wire Rack based on file ordering)
     primary_rack_name = list(racks.keys())[0]
@@ -697,9 +707,9 @@ def run_space_allocation(
     llm_backend = os.getenv("LLM_BACKEND", "anthropic").strip().lower()
     use_llm     = bool(api_key) or llm_backend in ("local", "gemini", "vertex", "azure")
 
-    for sheet in buckets:
-        bucket = sheet.replace("Bucket ", "").replace("bucket ", "").strip()
-        logger.info(f"\n── Bucket {bucket} ──────────────────────────────────")
+    for sheet in sheets:
+        group_name = sheet   # already human-readable & length-safe from msl_generator.py
+        logger.info(f"\n── {group_name} ──────────────────────────────────")
 
         skus = load_msl_bucket(xl, sheet)
         if skus.empty:
@@ -719,7 +729,7 @@ def run_space_allocation(
 
         if use_llm:
             logger.info("  Requesting LLM recommendation...")
-            prompt = build_llm_prompt(bucket, df_placed, primary_rack_name, primary_rack, asset_sum)
+            prompt = build_llm_prompt(group_name, df_placed, primary_rack_name, primary_rack, asset_sum)
             try:
                 llm_text = get_llm_recommendation(prompt, api_key, model)
             except Exception as exc:
@@ -731,7 +741,7 @@ def run_space_allocation(
         else:
             llm_text = "LLM not configured. Review allocation table above."
 
-        results[bucket] = {
+        results[group_name] = {
             "df":                 df_placed,
             "rack_name":          primary_rack_name,
             "rack":               primary_rack,
