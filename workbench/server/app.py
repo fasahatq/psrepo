@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from workbench.server import artifacts, copilot  # noqa: E402
+from workbench.server import artifacts, copilot, deck  # noqa: E402
 from workbench.server.runner import current_run, start_run  # noqa: E402
 
 app = FastAPI(title="Perfect Store AI Workbench API", version="1.0.0")
@@ -59,7 +59,7 @@ class CopilotBody(BaseModel):
 def health() -> dict:
     backend, _, model = copilot._resolve_model()
     return {"status": "ok", "llm_backend": backend, "model": model,
-            "project_root": PROJECT_ROOT}
+            "deck_render": deck.has_soffice(), "project_root": PROJECT_ROOT}
 
 
 # ── inbox ────────────────────────────────────────────────────────────────────
@@ -153,6 +153,27 @@ def get_run_chart(run_id: str, name: str) -> FileResponse:
         p = artifacts.chart_path(run_id, name)
     except FileNotFoundError:
         raise HTTPException(404, "chart not found")
+    return FileResponse(p, media_type="image/png")
+
+
+@app.get("/api/runs/{run_id}/deck")
+def get_run_deck(run_id: str) -> dict:
+    try:
+        artifacts._run_dir(run_id)
+    except FileNotFoundError:
+        raise HTTPException(404, f"run {run_id} not found")
+    try:
+        return deck.render(run_id)
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc))
+
+
+@app.get("/api/runs/{run_id}/deck/{name}")
+def get_run_slide(run_id: str, name: str) -> FileResponse:
+    try:
+        p = deck.slide_path(run_id, name)
+    except FileNotFoundError:
+        raise HTTPException(404, "slide not found")
     return FileResponse(p, media_type="image/png")
 
 

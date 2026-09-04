@@ -28,31 +28,43 @@ cd workbench && npm install && npm run dev
 
 Vite proxies `/api/*` to the backend on `:8020`.
 
+Nav is three sections: **Market Workspace**, **Output Studio**, **Agent Hub**.
+
 ## What is wired to real data
 
 | Area | Source |
 |---|---|
-| **Command Center** metrics, Recent outputs | `GET /api/runs` — the folders in `outputs/<timestamp>/` |
-| **Output Studio** | `GET /api/runs/{id}` — real artifacts, sizes, deck slide titles, `all_segments*.csv` summary, PNG charts, downloads |
-| **New analysis** | `POST /api/runs` → `pipeline.run_pipeline` on a background thread |
-| **Live Run** view | `GET /api/runs/stream` (SSE) — step events + `perfect_store.*` logs |
+| **Market Workspace — Execute pipeline** | inline source-file picker → `POST /api/runs` → `pipeline.run_pipeline` on a background thread |
+| **Market Workspace — horizontal pipeline** | `GET /api/runs/stream` (SSE) — 7 stage nodes light amber→green from step events; live log strip below |
+| **Market Workspace — Recent outputs** | `GET /api/runs`; capped to ~2 rows, scrolls |
+| **Market Workspace — Output preview** | `GET /api/runs/{id}/deck` → real slide PNGs (`soffice` .pptx→pdf, PyMuPDF rasterise, cached in `outputs/<run>/.deck_cache/`), shown in a scrollable strip |
+| **Output Studio — Segmentation agent** | `segment_cards` from `segment_report*.xlsx` "Segment Cards" sheet — label, channel · occasion, growth, headline, Hero SKU chips |
+| **Output Studio — MSL agent** | `top_skus` — Hero SKUs ranked by how many segments call them out |
+| **Output Studio — Recommended assets** | each segment's "Merch & Space" Top Actions (chiller, POSM, planogram…) + KPI |
+| **Output Studio — Charts / Deliverables** | `charts/*.png` and all run files with download links |
 | **Agent Hub** | one card per `agents/*.py`; status from the last run, live during a run |
 | **Copilot** | `POST /api/copilot` → `agents.llm_client.call_llm`, grounded on the selected run's summary. Uses whatever `LLM_BACKEND` is set in `.env` (currently `vertex` / `gemini-2.5-flash`) |
 | **Add data** | `POST /api/inbox` — multipart upload into `inbox/` |
 
-## Known limitations (by design, see the plan)
+## Requirements
+
+- Python deps: `venv/bin/pip install -r workbench/server/requirements.txt`
+- **`soffice`** (LibreOffice, headless) on `PATH` for deck slide rendering:
+  `sudo apt-get install -y --no-install-recommends libreoffice-impress libreoffice-core`.
+  Without it, everything works except the deck preview (`/api/health` reports `deck_render: false`).
+
+## Known limitations (by design)
 
 - **No "market" field** in the data model — every run shows under *India*; the
   *Mexico* / *Brazil* workspaces are empty states.
-- **Approvals** are stored in `localStorage` only (no server-side approval store).
-- **Monitoring Hub** shows real run history; the adoption % / in-market impact
-  tiles have no feedback source and are labelled as not wired.
 - **One** pipeline run at a time (`POST /api/runs` returns `409` if one is active).
 - Copilot needs valid Vertex ADC on the host.
+- First deck preview for a run takes ~2–4 s (soffice conversion); then it's cached.
 
 ## API
 
 `GET /api/health` · `GET|POST /api/inbox` · `GET /api/runs` · `POST /api/runs` ·
 `GET /api/runs/active` · `GET /api/runs/stream` · `GET /api/runs/{id}` ·
 `GET /api/runs/{id}/file/{name}` · `GET /api/runs/{id}/chart/{name}` ·
+`GET /api/runs/{id}/deck` · `GET /api/runs/{id}/deck/{name}` ·
 `POST /api/copilot` — full schema at `http://localhost:8020/docs`.

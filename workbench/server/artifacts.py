@@ -237,6 +237,78 @@ def run_brief(run_dir: Path) -> dict:
     }
 
 
+_ASSET_WORDS = ("chiller", "cooler", "shelf", "planogram", "posm", "display",
+                "rack", "counter", "merch", "space", "fridge", "visi")
+
+
+def _split_actions(raw: str) -> list[dict]:
+    """'1. [Portfolio] Do a thing.  (KPI: x)\n2. ...' -> structured items."""
+    import re
+    out: list[dict] = []
+    if not isinstance(raw, str):
+        return out
+    for chunk in re.split(r"\s*\d+\.\s+", raw.strip()):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        m = re.match(r"\[([^\]]+)\]\s*(.+)", chunk) or re.match(r"([A-Za-z][\w &/]{1,28}?):\s+(.+)", chunk)
+        lever = (m.group(1).strip() if m else "")
+        body = (m.group(2).strip() if m else chunk)
+        kpi = ""
+        km = re.search(r"\(KPI:\s*(.+?)\)\s*$", body)
+        if km:
+            kpi = km.group(1).strip()
+            body = body[: km.start()].strip()
+        blob = f"{lever} {body}".lower()
+        out.append({
+            "lever": lever, "text": body, "kpi": kpi,
+            "is_asset": any(w in blob for w in _ASSET_WORDS),
+        })
+    return out
+
+
+def segment_cards(run_dir: Path) -> list[dict]:
+    """The 'Segment Cards' sheet of segment_report*.xlsx — the crisp per-segment
+    view: hero SKUs, top actions, and the merch/space assets called out."""
+    rep = next((p for p in run_dir.glob("segment_report*.xlsx")), None)
+    if rep is None:
+        return []
+    try:
+        df = pd.read_excel(rep, sheet_name="Segment Cards")
+    except Exception:
+        return []
+    cards: list[dict] = []
+    for _, r in df.iterrows():
+        actions = _split_actions(r.get("Top Actions", ""))
+        skus = [s.strip() for s in str(r.get("Hero SKUs", "")).split(",") if s.strip()]
+        cards.append({
+            "cluster": int(r["Cluster"]) if pd.notna(r.get("Cluster")) else None,
+            "label": str(r.get("Label", "")),
+            "channel": str(r.get("Channel", "")),
+            "occasion": str(r.get("Occasion", "")),
+            "headline": str(r.get("Headline", "")),
+            "snapshot": str(r.get("Shopper Snapshot", "")),
+            "growth": str(r.get("Growth", "")),
+            "dominant_sec": str(r.get("Dominant SEC", "")),
+            "hero_skus": skus,
+            "actions": actions,
+            "assets": [a for a in actions if a["is_asset"]],
+        })
+    return cards
+
+
+def top_skus_across_segments(cards: list[dict], limit: int = 12) -> list[dict]:
+    """Hero SKUs ranked by how many segments call them out."""
+    from collections import Counter, defaultdict
+    seen: dict[str, list[str]] = defaultdict(list)
+    for c in cards:
+        for s in c["hero_skus"]:
+            seen[s].append(c["label"])
+    counts = Counter({k: len(v) for k, v in seen.items()})
+    return [{"sku": k, "segments": seen[k], "count": n}
+            for k, n in counts.most_common(limit)]
+
+
 def run_detail(run_id: str) -> dict:
     run_dir = _run_dir(run_id)
     art = scan_artifacts(run_dir)
@@ -253,12 +325,15 @@ def run_detail(run_id: str) -> dict:
                 entry["slides"] = _slide_count(p)
             files.append(entry)
     deck = art["pptx"][0] if art["pptx"] else None
+    cards = segment_cards(run_dir)
     return {
         **run_brief(run_dir),
         "files": files,
         "charts": [c.name for c in art["charts"]],
         "deck_titles": _deck_titles(deck) if deck else [],
         "summary": run_summary(run_dir),
+        "segment_cards": cards,
+        "top_skus": top_skus_across_segments(cards),
     }
 
 

@@ -8,10 +8,14 @@ ROOT="$(cd .. && pwd)"
 PY="$ROOT/venv/bin/python"
 [ -x "$PY" ] || PY="python3"
 
-if ! "$PY" -c "import fastapi" 2>/dev/null; then
-  echo "→ installing backend deps (fastapi, uvicorn, python-multipart)"
+if ! "$PY" -c "import fastapi, pymupdf" 2>/dev/null; then
+  echo "→ installing backend deps (fastapi, uvicorn, python-multipart, pymupdf)"
   "$PY" -m pip install -r server/requirements.txt
 fi
+
+command -v soffice >/dev/null 2>&1 || \
+  echo "⚠ 'soffice' (LibreOffice) not found — deck slide previews will be unavailable." \
+       "Install with: sudo apt-get install -y --no-install-recommends libreoffice-impress libreoffice-core"
 
 if [ ! -d node_modules ]; then
   echo "→ installing frontend deps (npm install)"

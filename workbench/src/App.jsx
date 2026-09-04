@@ -1,10 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  Activity, ArrowUpRight, BarChart3, Bell, Bot, CheckCircle2, ChevronDown, ChevronRight,
-  Download, Eye, FileBarChart2, FileText, Globe2, LayoutDashboard, Loader2, MessageSquareText,
-  MoreHorizontal, Play, RefreshCw, Search, Send, ShieldCheck, Sparkles, Store, UploadCloud,
-  X, Zap,
+  BarChart3, Bell, Bot, CheckCircle2, ChevronDown, ChevronRight,
+  Download, FileBarChart2, FileText, Globe2, LayoutDashboard, Loader2, MessageSquareText,
+  Package, Play, RefreshCw, Search, Send, ShieldCheck, Sparkles, Store, UploadCloud, X, Zap,
 } from "lucide-react";
 
 /* ── brand ──────────────────────────────────────────────────────────────── */
@@ -14,24 +13,21 @@ const C = {
 };
 
 const navItems = [
-  ["home", "Command Center", LayoutDashboard],
   ["workspace", "Market Workspace", Globe2],
   ["outputs", "Output Studio", FileBarChart2],
   ["agents", "Agent Hub", Sparkles],
-  ["approvals", "Approval Center", ShieldCheck],
-  ["monitor", "Monitoring Hub", Activity],
 ];
 
 const MARKETS = ["India", "Mexico", "Brazil"];
 
 /* 7 pipeline steps — labels mirror gui/steps.py STEP_META */
 const STEPS = [
-  [1, "Load data"],
-  [2, "Data quality checks"],
+  [1, "Load"],
+  [2, "Data quality"],
   [3, "Prioritization"],
   [4, "Segmentation"],
-  [5, "MSL generation"],
-  [6, "Generate outputs"],
+  [5, "MSL"],
+  [6, "Outputs"],
   [7, "Space allocation"],
 ];
 
@@ -74,7 +70,6 @@ const api = {
 
 const fmtInt = (n) => (n == null ? "—" : Number(n).toLocaleString("en-IN"));
 const fmtRupee = (n) => (n == null ? "—" : "₹" + Math.round(Number(n)).toLocaleString("en-IN"));
-const monthKey = (iso) => (iso || "").slice(0, 7);
 
 /* ── data hooks ─────────────────────────────────────────────────────────── */
 function useHealth() {
@@ -107,10 +102,10 @@ function useRunDetail(id) {
 
 /* Live SSE stream of the current pipeline run. Bump `streamKey` to (re)connect. */
 function useRunStream(streamKey) {
-  const [state, setState] = useState({ status: "idle", steps: {}, logs: [], meta: null, outputDir: null });
+  const [state, setState] = useState({ status: "idle", steps: {}, logs: [], detail: {}, meta: null, outputDir: null });
   useEffect(() => {
     if (streamKey === 0) return;
-    setState({ status: "connecting", steps: {}, logs: [], meta: null, outputDir: null });
+    setState({ status: "connecting", steps: {}, logs: [], detail: {}, meta: null, outputDir: null });
     const es = new EventSource("/api/runs/stream");
     es.onmessage = (e) => {
       let ev;
@@ -120,14 +115,16 @@ function useRunStream(streamKey) {
         if (ev.kind === "init") return { ...s, status: "running", meta: ev.meta };
         if (ev.kind === "step") {
           const steps = { ...s.steps };
+          const detail = { ...s.detail };
           if (ev.status === "running") {
             for (const [n] of STEPS) if (n < ev.step && steps[n] !== "done") steps[n] = "done";
           }
           steps[ev.step] = ev.status;
-          return { ...s, status: "running", steps };
+          if (ev.detail) detail[ev.step] = ev.detail;
+          return { ...s, status: "running", steps, detail };
         }
         if (ev.kind === "log") {
-          const line = `${ev.ts}  ${(ev.level || "").padEnd(5)} ${(ev.name || "").padEnd(20)} ${ev.msg}`;
+          const line = `${ev.ts}  ${(ev.level || "").padEnd(5)} ${ev.msg}`;
           return { ...s, logs: [...s.logs, line].slice(-400) };
         }
         if (ev.kind === "end") {
@@ -145,7 +142,7 @@ function useRunStream(streamKey) {
   return state;
 }
 
-/* ── small ui atoms (from the mockup) ───────────────────────────────────── */
+/* ── ui atoms ───────────────────────────────────────────────────────────── */
 const Btn = ({ children, className = "", ...p }) => (
   <button className={`rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-50 ${className}`} {...p}>
     {children}
@@ -154,155 +151,136 @@ const Btn = ({ children, className = "", ...p }) => (
 const Card = ({ children, className = "" }) => (
   <div className={`rounded-2xl bg-white shadow-sm ${className}`}>{children}</div>
 );
-const Tag = ({ children }) => (
-  <span className="rounded-full bg-[#A6CBF0]/40 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#155798]">
-    {children}
-  </span>
-);
+const Chip = ({ children, tone = "blue" }) => {
+  const map = {
+    blue: "bg-[#A6CBF0]/40 text-[#155798]",
+    green: "bg-[#BFDE7D]/50 text-[#3f6108]",
+    amber: "bg-[#FFE8AD]/70 text-[#8a5a00]",
+    slate: "bg-slate-100 text-slate-500",
+  };
+  return <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${map[tone]}`}>{children}</span>;
+};
 
-function MiniDeck({ headline, bars, market, takeaway }) {
-  const b = bars && bars.length ? bars : [36, 64, 45, 88, 58, 42];
-  const max = Math.max(...b, 1);
-  const top = b.indexOf(Math.max(...b));
+/* ── horizontal pipeline ────────────────────────────────────────────────── */
+function HorizontalPipeline({ steps, detail, status }) {
   return (
-    <div className="aspect-video rounded-xl bg-white p-5 shadow-lg ring-1 ring-slate-200">
-      <p className="text-[9px] font-bold text-[#3680CE]">PERFECT STORE · {(market || "INDIA").toUpperCase()} GT</p>
-      <h3 className="mt-1 text-lg font-black leading-tight">
-        {headline || "MSL opportunity is concentrated in two priority clusters"}
-      </h3>
-      <p className="mt-1 text-[9px] text-slate-400">Store-level recommendation output · pipeline run</p>
-      <div className="mt-4 grid h-[48%] grid-cols-[1.5fr_1fr] gap-4">
-        <div className="flex items-end gap-2 border-b border-l border-slate-300 px-3">
-          {b.map((h, i) => (
-            <div key={i} className="flex flex-1 flex-col items-center justify-end">
-              <div className="w-full rounded-t" style={{ height: `${(h / max) * 100}%`, background: i === top ? C.yellow : C.blue }} />
-              <span className="mt-1 text-[7px] text-slate-400">C{i}</span>
-            </div>
-          ))}
-        </div>
-        <div className="rounded-lg bg-[#A6CBF0]/30 p-3">
-          <p className="text-[8px] font-bold text-[#155798]">KEY TAKEAWAY</p>
-          <p className="mt-2 text-[9px] font-semibold">
-            {takeaway || "Cluster with the largest incremental distribution opportunity leads the plan."}
-          </p>
-        </div>
+    <div className="w-full">
+      <div className="flex items-start">
+        {STEPS.map(([n, label], i) => {
+          const st = steps[n];
+          const bg = st === "done" ? C.green : st === "running" ? C.yellow : st === "failed" ? "#d33" : "#e2e8f0";
+          const done = st === "done";
+          return (
+            <React.Fragment key={n}>
+              <div className="flex w-0 flex-1 flex-col items-center">
+                <motion.div
+                  animate={st === "running" ? { scale: [1, 1.12, 1] } : { scale: 1 }}
+                  transition={{ repeat: st === "running" ? Infinity : 0, duration: 1.1 }}
+                  className="grid h-9 w-9 place-items-center rounded-full text-[11px] font-bold text-white shadow-sm"
+                  style={{ background: bg }}
+                >
+                  {st === "running" ? <Loader2 size={14} className="animate-spin" /> : done ? <CheckCircle2 size={16} /> : n}
+                </motion.div>
+                <p className={`mt-2 text-center text-[10px] font-semibold ${st ? "text-[#02355A]" : "text-slate-400"}`}>{label}</p>
+                {detail?.[n] && <p className="mt-0.5 line-clamp-2 text-center text-[9px] text-slate-400">{detail[n]}</p>}
+              </div>
+              {i < STEPS.length - 1 && (
+                <div className="mt-4 h-0.5 flex-1 rounded-full" style={{ background: steps[STEPS[i + 1][0]] || done ? C.green : "#e2e8f0" }} />
+              )}
+            </React.Fragment>
+          );
+        })}
       </div>
-      <p className="mt-3 text-[7px] text-slate-400">CONFIDENTIAL</p>
+      <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        {status === "running" || status === "connecting" ? "Executing…"
+          : status === "done" ? "Run complete"
+          : status === "failed" ? "Run failed — see log"
+          : "Idle"}
+      </p>
     </div>
   );
 }
 
-/* ── stepper (shared by Run progress + the bottom Run status card) ──────── */
-function StepPill({ n, label, state }) {
-  const dot = state === "done" ? C.green : state === "running" ? C.yellow : state === "failed" ? "#d33" : "#cbd5e1";
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-slate-100 px-3 py-2">
-      <span className="grid h-6 w-6 place-items-center rounded-full text-[10px] font-bold text-white" style={{ background: dot }}>
-        {state === "running" ? <Loader2 size={12} className="animate-spin" /> : n}
-      </span>
-      <span className="text-xs font-semibold">{label}</span>
-      <span className="ml-auto text-[10px] uppercase tracking-wide text-slate-400">{state || "pending"}</span>
-    </div>
-  );
-}
-
-/* ── new-analysis modal ────────────────────────────────────────────────── */
-function NewAnalysisModal({ onClose, onStarted }) {
-  const [inbox, setInbox] = useState(null);
-  const [file, setFile] = useState("");
-  const [sample, setSample] = useState(5000);
-  const [useSample, setUseSample] = useState(true);
-  const [busy, setBusy] = useState(false);
+/* ── deck viewer (rendered slide images, scrollable) ────────────────────── */
+function DeckViewer({ runId, height = "h-[460px]" }) {
+  const [deck, setDeck] = useState(null);
   const [err, setErr] = useState(null);
-  const uploadRef = useRef(null);
-
   useEffect(() => {
-    api.get("/api/inbox").then((e) => {
-      setInbox(e);
-      const first = e.find((x) => x.kind === "dataset") || e[0];
-      if (first) setFile(first.name);
-    }).catch((e) => setErr(e.message));
-  }, []);
+    if (!runId) { setDeck(null); return; }
+    let live = true;
+    setDeck(null); setErr(null);
+    api.get(`/api/runs/${runId}/deck`)
+      .then((d) => { if (live) setDeck(d); })
+      .catch((e) => { if (live) setErr(e.message); });
+    return () => { live = false; };
+  }, [runId]);
 
-  const start = async () => {
-    setBusy(true); setErr(null);
-    try {
-      const snap = await api.post("/api/runs", { file, sample_size: useSample ? Number(sample) : null });
-      onStarted(snap);
-    } catch (e) { setErr(e.message); setBusy(false); }
-  };
-
-  const doUpload = async (f) => {
-    if (!f) return;
-    setBusy(true); setErr(null);
-    try {
-      await api.upload("/api/inbox", f);
-      const e = await api.get("/api/inbox");
-      setInbox(e); setFile(f.name);
-    } catch (er) { setErr(er.message); }
-    setBusy(false);
-  };
-
-  const selected = inbox?.find((x) => x.name === file);
+  if (!runId) return <p className="text-xs text-slate-400">Select a run to preview its deck.</p>;
+  if (err) return <p className="rounded-lg bg-amber-50 p-3 text-[11px] text-amber-700">Deck preview unavailable ({err}).</p>;
+  if (!deck) return (
+    <div className={`grid ${height} place-items-center rounded-xl bg-[#F7F5F3] text-xs text-slate-400`}>
+      <span className="flex items-center gap-2"><Loader2 size={14} className="animate-spin" />rendering slides…</span>
+    </div>
+  );
+  if (!deck.count) return <p className="text-xs text-slate-400">No deck was produced for this run.</p>;
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
-      <motion.div
-        initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}
-        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-black">New analysis</h3>
-          <button onClick={onClose}><X size={18} /></button>
-        </div>
-        <p className="mt-1 text-xs text-slate-500">Run the Perfect Store pipeline on a file from <code>inbox/</code>.</p>
-
-        <label className="mt-4 block text-[11px] font-bold uppercase text-slate-400">Source file</label>
-        {inbox == null ? (
-          <p className="mt-2 text-xs text-slate-400">Loading inbox…</p>
-        ) : (
-          <select value={file} onChange={(e) => setFile(e.target.value)}
-            className="mt-1 w-full rounded-xl border border-slate-200 p-2 text-sm">
-            {inbox.map((e) => (
-              <option key={e.name} value={e.name}>
-                {e.name} ({e.size_h}){e.kind === "reference" ? " — reference, not a pipeline input" : ""}
-              </option>
-            ))}
-          </select>
-        )}
-        {selected?.kind === "reference" && (
-          <p className="mt-1 text-[11px] font-semibold text-[#EB9F0A]">
-            This file has no outlet/SKU columns — the run will fail at prioritization.
-          </p>
-        )}
-
-        <button onClick={() => uploadRef.current?.click()}
-          className="mt-2 flex items-center gap-2 text-[11px] font-bold text-[#3680CE]">
-          <UploadCloud size={13} /> Upload a new file to inbox/
-        </button>
-        <input ref={uploadRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
-          onChange={(e) => doUpload(e.target.files?.[0])} />
-
-        <label className="mt-4 flex items-center gap-2 text-xs font-semibold">
-          <input type="checkbox" checked={useSample} onChange={(e) => setUseSample(e.target.checked)} />
-          Sample rows (faster test run)
-        </label>
-        {useSample && (
-          <input type="number" min={500} step={500} value={sample}
-            onChange={(e) => setSample(e.target.value)}
-            className="mt-2 w-full rounded-xl border border-slate-200 p-2 text-sm" />
-        )}
-
-        {err && <p className="mt-3 rounded-lg bg-red-50 p-2 text-[11px] text-red-600">{err}</p>}
-
-        <div className="mt-5 flex justify-end gap-2">
-          <Btn className="border border-slate-200" onClick={onClose}>Cancel</Btn>
-          <Btn className="bg-[#3680CE] text-white" disabled={busy || !file} onClick={start}>
-            {busy ? "Starting…" : "Run pipeline"}
-          </Btn>
-        </div>
-      </motion.div>
+    <div>
+      <div className={`ps-scroll ${height} space-y-3 overflow-y-auto rounded-xl bg-[#F7F5F3] p-3`}>
+        {deck.slides.map((s, i) => (
+          <div key={s} className="overflow-hidden rounded-lg ring-1 ring-slate-200">
+            <img src={`/api/runs/${runId}/deck/${s}`} alt={`Slide ${i + 1}`} className="block w-full" loading="lazy" />
+            <p className="bg-white px-2 py-1 text-[9px] text-slate-400">Slide {i + 1} / {deck.count}</p>
+          </div>
+        ))}
+      </div>
+      <a href={`/api/runs/${runId}/file/${encodeURIComponent(deck.deck_name)}`}
+        className="mt-2 flex items-center gap-1 text-[11px] font-bold text-[#3680CE]">
+        <Download size={13} /> Download {deck.deck_name}
+      </a>
     </div>
+  );
+}
+
+/* ── recent outputs — two rows, then scroll ────────────────────────────── */
+function RecentOutputs({ runs, selectedId, onPick, onRefresh, market }) {
+  return (
+    <Card>
+      <div className="p-5">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold">Recent outputs</h3>
+          <button onClick={onRefresh} className="text-slate-400 hover:text-[#3680CE]"><RefreshCw size={14} /></button>
+        </div>
+        {runs == null ? (
+          <p className="mt-3 text-xs text-slate-400">Loading…</p>
+        ) : runs.length === 0 ? (
+          <p className="mt-3 rounded-xl bg-[#F7F5F3] p-4 text-xs text-slate-500">
+            No runs {market ? `for ${market}` : "yet"}. Execute the pipeline above.
+          </p>
+        ) : (
+          <div className="ps-scroll mt-3 max-h-[136px] space-y-2 overflow-y-auto pr-1">
+            {runs.map((o) => (
+              <button key={o.id} onClick={() => onPick(o.id)}
+                className={`flex w-full items-center justify-between rounded-xl border p-3 text-left ${selectedId === o.id ? "border-[#3680CE] bg-[#A6CBF0]/20" : "border-slate-100"}`}>
+                <div className="flex items-center gap-3">
+                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#02355A] text-white">
+                    {o.counts.deck ? <FileText size={15} /> : <BarChart3 size={15} />}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-bold">{o.label}</p>
+                    <p className="truncate text-[10px] text-slate-400">
+                      {o.deck_slides ? `${o.deck_slides} slides · ` : ""}
+                      {o.segment_count != null ? `${o.segment_count} segments · ` : ""}{fmtInt(o.outlets)} outlets
+                    </p>
+                  </div>
+                </div>
+                <Chip tone="green">{o.status}</Chip>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 
@@ -311,29 +289,41 @@ export default function App() {
   const health = useHealth();
   const { runs, err: runsErr, refresh: refreshRuns } = useRuns();
 
-  const [section, setSection] = useState("home");
+  const [section, setSection] = useState("workspace");
   const [market, setMarket] = useState("India");
   const [selectedRunId, setSelectedRunId] = useState(null);
   const [copilot, setCopilot] = useState(true);
   const [prompt, setPrompt] = useState("");
-  const [heroPrompt, setHeroPrompt] = useState("");
-  const [modal, setModal] = useState(false);
   const [streamKey, setStreamKey] = useState(0);
   const [messages, setMessages] = useState([
-    { role: "ai", text: "I'm ready to help with this workspace. Open a run in Output Studio, then ask me to explain the segments, compare priority tiers, or draft a leadership story." },
+    { role: "ai", text: "I'm ready to help with this workspace. Pick a run, then ask me to explain the segments, rank the opportunity, or draft a leadership story." },
   ]);
   const [sending, setSending] = useState(false);
+
+  // execute-pipeline controls (inline in Market Workspace)
+  const [inbox, setInbox] = useState(null);
+  const [execFile, setExecFile] = useState("");
+  const [execSample, setExecSample] = useState(5000);
+  const [execUseSample, setExecUseSample] = useState(true);
+  const [execBusy, setExecBusy] = useState(false);
+  const [execErr, setExecErr] = useState(null);
   const addFileRef = useRef(null);
 
   const stream = useRunStream(streamKey);
   const runActive = stream.status === "running" || stream.status === "connecting";
 
-  // default selection = newest run
+  useEffect(() => {
+    api.get("/api/inbox").then((e) => {
+      setInbox(e);
+      const first = e.find((x) => x.kind === "dataset") || e[0];
+      if (first) setExecFile(first.name);
+    }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (runs && runs.length && !selectedRunId) setSelectedRunId(runs[0].id);
   }, [runs, selectedRunId]);
 
-  // when a live run finishes, refresh the list and select it
   useEffect(() => {
     if (stream.status === "done" && stream.outputDir) {
       refreshRuns();
@@ -341,30 +331,36 @@ export default function App() {
     }
   }, [stream.status, stream.outputDir, refreshRuns]);
 
-  // pick up a run that is already in progress on load
   useEffect(() => {
     api.get("/api/runs/active").then((s) => { if (s.status === "running") setStreamKey((k) => k + 1); }).catch(() => {});
   }, []);
 
   const detail = useRunDetail(selectedRunId);
   const selectedRun = runs?.find((r) => r.id === selectedRunId) || null;
-
-  const thisMonth = monthKey(new Date().toISOString());
-  const outputsThisMonth = (runs || []).filter((r) => monthKey(r.ts) === thisMonth).length;
   const latest = runs && runs[0];
-
-  const metrics = [
-    ["Completed runs", runs ? String(runs.length) : "—", "in outputs/", C.blue],
-    ["Outputs this month", String(outputsThisMonth), thisMonth, C.green],
-    ["Segments (latest run)", latest?.segment_count != null ? String(latest.segment_count) : "—", latest?.label || "", C.yellow],
-    ["Outlets analysed (latest)", fmtInt(latest?.outlets), latest?.label || "", C.darkBlue],
-  ];
 
   const marketRuns = useMemo(
     () => (runs || []).filter((r) => (r.market || "India") === market),
     [runs, market]
   );
-  const visibleRuns = section === "workspace" ? marketRuns : (runs || []);
+
+  const execute = async () => {
+    setExecBusy(true); setExecErr(null);
+    try {
+      await api.post("/api/runs", { file: execFile, sample_size: execUseSample ? Number(execSample) : null });
+      setStreamKey((k) => k + 1);
+    } catch (e) { setExecErr(e.message); }
+    setExecBusy(false);
+  };
+
+  const addDataFile = async (f) => {
+    if (!f) return;
+    try {
+      await api.upload("/api/inbox", f);
+      const e = await api.get("/api/inbox");
+      setInbox(e); setExecFile(f.name);
+    } catch (e) { alert(e.message); }
+  };
 
   const sendCopilot = async (text) => {
     const q = (text ?? prompt).trim();
@@ -384,27 +380,11 @@ export default function App() {
     setSending(false);
   };
 
-  const onRunStarted = (snap) => {
-    setModal(false);
-    setStreamKey((k) => k + 1);
-    setSection("run");
-  };
+  const selectedInbox = inbox?.find((x) => x.name === execFile);
 
-  const addDataFile = async (f) => {
-    if (!f) return;
-    try { await api.upload("/api/inbox", f); } catch (e) { alert(e.message); }
-  };
-
-  const sectionTitle = {
-    home: "Command Center", workspace: `${market} Workspace`, outputs: "Output Studio",
-    agents: "Agent Hub", approvals: "Approval Center", monitor: "Monitoring Hub", run: "Live Run",
-  }[section];
-
+  const sectionTitle = { workspace: `${market} Workspace`, outputs: "Output Studio", agents: "Agent Hub" }[section];
   const sectionHeading = {
-    home: "Good afternoon, Fasahat", workspace: `${market} Perfect Store`,
-    outputs: "Explore generated outputs", agents: "Specialist agents",
-    approvals: "Review and approve", monitor: "Track adoption and impact",
-    run: "Pipeline execution",
+    workspace: `${market} Perfect Store`, outputs: "Segmentation & MSL — refined outputs", agents: "Specialist agents",
   }[section];
 
   return (
@@ -451,7 +431,7 @@ export default function App() {
               <button key={id} onClick={() => setSection(id)}
                 className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold ${section === id ? "bg-[#A6CBF0]/45" : "text-slate-500"}`}>
                 <Icon size={17} />{label}
-                {id === "monitor" && runActive && <span className="ml-auto h-2 w-2 rounded-full bg-[#EB9F0A]" />}
+                {id === "workspace" && runActive && <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-[#EB9F0A]" />}
               </button>
             ))}
           </nav>
@@ -464,7 +444,7 @@ export default function App() {
           ))}
           <div className="mt-6 rounded-xl bg-[#02355A] p-3 text-white">
             <div className="flex items-center gap-2 text-xs font-bold"><ShieldCheck size={15} />Governed workspace</div>
-            <p className="mt-2 text-[10px] text-[#A6CBF0]">All agent actions are logged. Approvals are recorded locally in this browser.</p>
+            <p className="mt-2 text-[10px] text-[#A6CBF0]">All agent actions are logged. Runs execute on the local pipeline.</p>
           </div>
         </aside>
 
@@ -476,7 +456,11 @@ export default function App() {
                 <div>
                   <p className="text-xs font-bold uppercase text-[#3680CE]">{sectionTitle}</p>
                   <h2 className="mt-1 text-2xl font-black">{sectionHeading}</h2>
-                  <p className="mt-1 text-sm text-slate-500">Here is what needs your attention across Perfect Store.</p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {section === "workspace" ? "Execute the pipeline and preview the leadership deck as it is generated."
+                      : section === "outputs" ? "A crisp view of what the Segmentation and MSL agents recommend."
+                      : "Status of each specialist agent in the run."}
+                  </p>
                 </div>
                 <div className="flex gap-2">
                   <Btn className="border border-[#155798]" onClick={() => addFileRef.current?.click()}>
@@ -484,9 +468,6 @@ export default function App() {
                   </Btn>
                   <input ref={addFileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
                     onChange={(e) => addDataFile(e.target.files?.[0])} />
-                  <Btn className="bg-[#3680CE] text-white" onClick={() => setModal(true)}>
-                    <Play size={15} className="mr-2 inline" />New analysis
-                  </Btn>
                 </div>
               </div>
 
@@ -496,213 +477,89 @@ export default function App() {
                 </div>
               )}
 
-              {(section === "home" || section === "monitor") && (
-                <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  {metrics.map((x) => (
-                    <Card key={x[0]}>
+              {/* ══ Market Workspace ══ */}
+              {section === "workspace" && (
+                <div className="space-y-5">
+                  {/* execute + horizontal pipeline */}
+                  <Card>
+                    <div className="p-5">
+                      <div className="flex flex-wrap items-end gap-3">
+                        <div>
+                          <label className="text-[11px] font-bold uppercase text-slate-400">Source file</label>
+                          <select value={execFile} onChange={(e) => setExecFile(e.target.value)} disabled={runActive}
+                            className="mt-1 block w-64 rounded-xl border border-slate-200 p-2 text-sm">
+                            {(inbox || []).map((e) => (
+                              <option key={e.name} value={e.name}>
+                                {e.name} ({e.size_h}){e.kind === "reference" ? " — reference" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <label className="flex items-center gap-2 pb-2 text-xs font-semibold">
+                          <input type="checkbox" checked={execUseSample} disabled={runActive}
+                            onChange={(e) => setExecUseSample(e.target.checked)} />
+                          Sample
+                        </label>
+                        {execUseSample && (
+                          <input type="number" min={500} step={500} value={execSample} disabled={runActive}
+                            onChange={(e) => setExecSample(e.target.value)}
+                            className="w-24 rounded-xl border border-slate-200 p-2 text-sm" />
+                        )}
+                        <Btn className="bg-[#3680CE] text-white" disabled={runActive || execBusy || !execFile} onClick={execute}>
+                          {runActive ? <><Loader2 size={14} className="mr-2 inline animate-spin" />Running…</>
+                            : execBusy ? "Starting…"
+                            : <><Play size={14} className="mr-2 inline" />Execute pipeline</>}
+                        </Btn>
+                      </div>
+                      {selectedInbox?.kind === "reference" && (
+                        <p className="mt-2 text-[11px] font-semibold text-[#EB9F0A]">
+                          This file has no outlet/SKU columns — the run will fail at prioritization.
+                        </p>
+                      )}
+                      {execErr && <p className="mt-2 rounded-lg bg-red-50 p-2 text-[11px] text-red-600">{execErr}</p>}
+
+                      <div className="mt-6 border-t border-slate-100 pt-6">
+                        <HorizontalPipeline steps={stream.steps} detail={stream.detail} status={stream.status} />
+                      </div>
+
+                      {stream.logs.length > 0 && (
+                        <pre className="ps-scroll mt-4 h-28 overflow-auto rounded-xl bg-[#02355A] p-3 text-[10px] leading-relaxed text-[#A6CBF0]">
+                          {stream.logs.slice(-40).join("\n")}
+                        </pre>
+                      )}
+                    </div>
+                  </Card>
+
+                  <div className="grid gap-5 lg:grid-cols-[1fr_1.1fr]">
+                    <RecentOutputs runs={marketRuns} selectedId={selectedRunId} market={market}
+                      onPick={(id) => setSelectedRunId(id)} onRefresh={refreshRuns} />
+
+                    <Card>
                       <div className="p-5">
-                        <div className="mb-3 h-1.5 w-10 rounded-full" style={{ background: x[3] }} />
-                        <p className="text-xs text-slate-500">{x[0]}</p>
-                        <p className="mt-1 text-2xl font-black">{x[1]}</p>
-                        <p className="text-xs text-slate-400">{x[2]}</p>
+                        <div className="mb-3 flex items-center justify-between">
+                          <div>
+                            <h3 className="font-bold">Output preview — leadership deck</h3>
+                            <p className="text-xs text-slate-400">{selectedRun ? selectedRun.label : "no run selected"}</p>
+                          </div>
+                          <button onClick={() => setCopilot(true)}
+                            className="flex items-center gap-1 text-[11px] font-bold text-[#3680CE]">
+                            <MessageSquareText size={13} />Chat
+                          </button>
+                        </div>
+                        <DeckViewer runId={selectedRunId} />
                       </div>
                     </Card>
-                  ))}
+                  </div>
                 </div>
               )}
 
-              {(section === "home" || section === "workspace") && (
-                <div className="mb-5 grid gap-5 lg:grid-cols-[1.3fr_1fr]">
-                  <Card className="bg-[#02355A] text-white">
-                    <div className="p-6">
-                      <div className="flex justify-between">
-                        <div>
-                          <p className="text-xs font-bold text-[#A6CBF0]">PERFECT STORE COPILOT</p>
-                          <h3 className="mt-2 text-xl font-bold">What would you like to do?</h3>
-                          <p className="text-sm text-[#A6CBF0]">Ask across outputs, agents and approved run data.</p>
-                        </div>
-                        <Bot size={28} />
-                      </div>
-                      <div className="mt-5 flex rounded-xl bg-white p-2">
-                        <input value={heroPrompt} onChange={(e) => setHeroPrompt(e.target.value)}
-                          onFocus={() => setCopilot(true)}
-                          onKeyDown={(e) => { if (e.key === "Enter" && heroPrompt.trim()) { sendCopilot(heroPrompt); setHeroPrompt(""); } }}
-                          className="flex-1 px-2 text-sm text-[#02355A] outline-none"
-                          placeholder="Which segment holds the biggest opportunity?" />
-                        <button className="rounded-lg bg-[#3680CE] p-2"
-                          onClick={() => { if (heroPrompt.trim()) { setCopilot(true); sendCopilot(heroPrompt); setHeroPrompt(""); } }}>
-                          <Send size={16} />
-                        </button>
-                      </div>
-                    </div>
-                  </Card>
-                  <Card>
-                    <div className="p-5">
-                      <h3 className="font-bold">Needs attention</h3>
-                      <div className="mt-4 space-y-3">
-                        {latest ? (
-                          <button onClick={() => { setSelectedRunId(latest.id); setSection("approvals"); }}
-                            className="w-full rounded-xl bg-[#FFE8AD]/50 p-3 text-left text-xs font-bold">
-                            {latest.deck_name ? `${latest.label} deck ready for approval` : `${latest.label} run — no deck produced`}
-                          </button>
-                        ) : (
-                          <div className="rounded-xl bg-[#A6CBF0]/30 p-3 text-xs font-bold">No runs yet — start a new analysis</div>
-                        )}
-                        {runActive && (
-                          <button onClick={() => setSection("run")}
-                            className="w-full rounded-xl bg-[#A6CBF0]/30 p-3 text-left text-xs font-bold">
-                            Pipeline running — view live progress
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </Card>
-                </div>
+              {/* ══ Output Studio ══ */}
+              {section === "outputs" && (
+                <OutputStudio runs={runs} selectedId={selectedRunId} setSelectedId={setSelectedRunId}
+                  detail={detail} onRefresh={refreshRuns} />
               )}
 
-              {/* ── Output Studio / recent outputs ── */}
-              {(section === "home" || section === "workspace" || section === "outputs") && (
-                <div className="grid gap-5 lg:grid-cols-[1.05fr_1fr]">
-                  <Card>
-                    <div className="p-5">
-                      <div className="flex items-center justify-between">
-                        <h3 className="font-bold">{section === "outputs" ? "All runs" : "Recent outputs"}</h3>
-                        <button onClick={refreshRuns} className="text-slate-400 hover:text-[#3680CE]"><RefreshCw size={14} /></button>
-                      </div>
-                      <div className="mt-4 space-y-2">
-                        {visibleRuns == null && <p className="text-xs text-slate-400">Loading…</p>}
-                        {visibleRuns && visibleRuns.length === 0 && (
-                          <p className="rounded-xl bg-[#F7F5F3] p-4 text-xs text-slate-500">
-                            No runs {section === "workspace" ? `for ${market}` : "yet"}. Use “New analysis”.
-                          </p>
-                        )}
-                        {(visibleRuns || []).map((o) => (
-                          <button key={o.id} onClick={() => { setSelectedRunId(o.id); setSection("outputs"); }}
-                            className={`flex w-full items-center justify-between rounded-xl border p-3 text-left ${selectedRunId === o.id ? "border-[#3680CE] bg-[#A6CBF0]/20" : "border-slate-100"}`}>
-                            <div className="flex items-center gap-3">
-                              <div className="grid h-10 w-10 place-items-center rounded-xl bg-[#02355A] text-white">
-                                {o.counts.deck ? <FileText size={17} /> : <BarChart3 size={17} />}
-                              </div>
-                              <div>
-                                <p className="text-xs font-bold">{o.label}</p>
-                                <p className="text-[10px] text-slate-400">
-                                  {o.market} · {o.deck_slides ? `${o.deck_slides} slides · ` : ""}
-                                  {o.segment_count != null ? `${o.segment_count} segments · ` : ""}
-                                  {fmtInt(o.outlets)} outlets
-                                </p>
-                              </div>
-                            </div>
-                            <span className="rounded-full bg-[#BFDE7D]/60 px-2 py-1 text-[9px] font-bold">{o.status}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </Card>
-
-                  <Card>
-                    <div className="p-5">
-                      <div className="mb-4 flex justify-between">
-                        <div>
-                          <h3 className="font-bold">Output preview</h3>
-                          <p className="text-xs text-slate-400">{selectedRun ? selectedRun.label : "Select a run"}</p>
-                        </div>
-                        <div className="flex gap-2 text-slate-400">
-                          {detail?.files?.[0] && (
-                            <a href={`/api/runs/${selectedRunId}/file/${encodeURIComponent(detail.files[0].name)}`}
-                              className="hover:text-[#3680CE]"><Download size={15} /></a>
-                          )}
-                          <MoreHorizontal size={15} />
-                        </div>
-                      </div>
-                      <MiniDeck
-                        market={selectedRun?.market}
-                        headline={detail?.deck_titles?.[0]?.replace(/^\d+\.\s*/, "")}
-                        bars={detail?.summary?.segments?.map((s) => s.outlets)}
-                        takeaway={
-                          detail?.summary?.segments?.[0]
-                            ? `${detail.summary.segments[0].label} is the largest segment (${detail.summary.segments[0].outlets} outlets, avg gap ${fmtRupee(detail.summary.segments[0].avg_gap)}).`
-                            : undefined
-                        }
-                      />
-                      <button onClick={() => { setCopilot(true); }}
-                        className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-[#3680CE] py-2.5 text-xs font-bold text-white">
-                        <MessageSquareText size={15} />Chat with this output
-                      </button>
-                    </div>
-                  </Card>
-                </div>
-              )}
-
-              {/* ── Output Studio detail ── */}
-              {section === "outputs" && detail && (
-                <div className="mt-5 grid gap-5 lg:grid-cols-2">
-                  <Card>
-                    <div className="p-5">
-                      <h3 className="font-bold">Deliverables</h3>
-                      <div className="mt-3 space-y-2">
-                        {detail.files.map((f) => (
-                          <a key={f.name} href={`/api/runs/${selectedRunId}/file/${encodeURIComponent(f.name)}`}
-                            className="flex items-center justify-between rounded-xl border border-slate-100 p-3 hover:border-[#3680CE]">
-                            <span className="truncate text-xs font-semibold">{f.name}</span>
-                            <span className="ml-3 shrink-0 text-[10px] text-slate-400">
-                              {f.slides ? `${f.slides} slides · ` : ""}{f.size_h}
-                            </span>
-                          </a>
-                        ))}
-                        {!detail.files.length && <p className="text-xs text-slate-400">No files in this run.</p>}
-                      </div>
-                      {detail.charts?.length > 0 && (
-                        <>
-                          <h4 className="mt-5 text-xs font-bold uppercase text-slate-400">Charts</h4>
-                          <div className="mt-2 grid grid-cols-2 gap-2">
-                            {detail.charts.map((c) => (
-                              <img key={c} src={`/api/runs/${selectedRunId}/chart/${encodeURIComponent(c)}`}
-                                alt={c} className="rounded-lg ring-1 ring-slate-200" />
-                            ))}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </Card>
-
-                  <Card>
-                    <div className="p-5">
-                      <h3 className="font-bold">Segment summary</h3>
-                      {detail.summary?.segments?.length ? (
-                        <table className="mt-3 w-full text-left text-xs">
-                          <thead className="text-[10px] uppercase text-slate-400">
-                            <tr><th className="py-1">Segment</th><th>Outlets</th><th>% univ</th><th>Avg VPO</th><th>Avg gap</th></tr>
-                          </thead>
-                          <tbody>
-                            {detail.summary.segments.map((s) => (
-                              <tr key={s.id} className="border-t border-slate-100">
-                                <td className="py-1.5 pr-2 font-semibold">{s.label}</td>
-                                <td>{fmtInt(s.outlets)}</td>
-                                <td>{s.pct_universe}%</td>
-                                <td>{fmtRupee(s.avg_vpo)}</td>
-                                <td>{fmtRupee(s.avg_gap)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      ) : (
-                        <p className="mt-3 text-xs text-slate-400">No all_segments summary in this run.</p>
-                      )}
-
-                      {detail.deck_titles?.length > 0 && (
-                        <>
-                          <h4 className="mt-5 text-xs font-bold uppercase text-slate-400">Deck slides</h4>
-                          <ol className="mt-2 space-y-1 text-xs text-slate-600">
-                            {detail.deck_titles.map((t) => <li key={t}>{t}</li>)}
-                          </ol>
-                        </>
-                      )}
-                    </div>
-                  </Card>
-                </div>
-              )}
-
-              {/* ── Agent Hub ── */}
+              {/* ══ Agent Hub ══ */}
               {section === "agents" && (
                 <div className="grid grid-cols-2 gap-4">
                   {AGENTS.map(([name, mod, steps, Icon, color]) => {
@@ -711,6 +568,7 @@ export default function App() {
                     const label = live
                       ? (st.includes("running") ? "Running now" : st.every((s) => s === "done") ? "Completed this run" : "Queued")
                       : latest ? `Ready · last run ${latest.label}` : "No runs yet";
+                    const detailLine = steps.map((n) => stream.detail[n]).filter(Boolean).join(" · ");
                     return (
                       <Card key={name}>
                         <div className="p-5">
@@ -719,118 +577,16 @@ export default function App() {
                           </div>
                           <h3 className="mt-4 font-bold">{name}</h3>
                           <p className="text-xs text-slate-500">{label}</p>
-                          <p className="mt-1 text-[10px] text-slate-400">agents/{mod}.py</p>
+                          {detailLine && <p className="mt-1 text-[10px] text-slate-400">{detailLine}</p>}
+                          <p className="mt-1 text-[10px] text-slate-300">agents/{mod}.py</p>
                         </div>
                       </Card>
                     );
                   })}
                 </div>
               )}
-
-              {/* ── Approval Center ── */}
-              {section === "approvals" && (
-                <ApprovalCenter runs={runs || []} onOpen={(id) => { setSelectedRunId(id); setSection("outputs"); }} />
-              )}
-
-              {/* ── Monitoring Hub ── */}
-              {section === "monitor" && (
-                <MonitoringHub runs={runs || []} live={runActive ? stream : null} />
-              )}
-
-              {/* ── Live Run ── */}
-              {section === "run" && (
-                <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
-                  <Card>
-                    <div className="p-5">
-                      <div className="flex items-center justify-between">
-                        <h3 className="font-bold">Steps</h3>
-                        <span className="text-[10px] uppercase tracking-wide text-slate-400">
-                          {stream.meta ? `${stream.meta.llm_backend} · ${stream.meta.model}` : stream.status}
-                        </span>
-                      </div>
-                      <div className="mt-4 space-y-2">
-                        {STEPS.map(([n, label]) => <StepPill key={n} n={n} label={label} state={stream.steps[n]} />)}
-                      </div>
-                      {stream.status === "done" && stream.outputDir && (
-                        <button onClick={() => { setSelectedRunId(stream.outputDir); setSection("outputs"); }}
-                          className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#5D910D] py-2.5 text-xs font-bold text-white">
-                          View output <ArrowUpRight size={13} />
-                        </button>
-                      )}
-                      {stream.status === "failed" && (
-                        <p className="mt-4 rounded-lg bg-red-50 p-2 text-[11px] text-red-600">Run failed — see the log.</p>
-                      )}
-                      {stream.status === "idle" && (
-                        <p className="mt-4 text-xs text-slate-400">No active run. Start one with “New analysis”.</p>
-                      )}
-                    </div>
-                  </Card>
-                  <Card>
-                    <div className="p-5">
-                      <h3 className="font-bold">Live log</h3>
-                      <pre className="ps-scroll mt-3 h-[420px] overflow-auto rounded-xl bg-[#02355A] p-3 text-[10px] leading-relaxed text-[#A6CBF0]">
-                        {stream.logs.join("\n") || "waiting for output…"}
-                      </pre>
-                    </div>
-                  </Card>
-                </div>
-              )}
             </motion.div>
           </AnimatePresence>
-
-          {/* bottom row — agent activity + run status */}
-          {section !== "run" && (
-            <div className="mt-5 grid gap-5 lg:grid-cols-[1.3fr_1fr]">
-              <Card>
-                <div className="p-5">
-                  <h3 className="text-sm font-bold">Agent activity</h3>
-                  <div className="mt-4 grid grid-cols-2 gap-2">
-                    {(runActive
-                      ? STEPS.filter(([n]) => stream.steps[n]).slice(-4).map(([n, l]) => [l, stream.steps[n]])
-                      : [
-                          ["Segmentation Agent", latest ? `${latest.segment_count} segments` : "idle"],
-                          ["Output Agent", latest ? `${latest.counts.excel} workbooks · ${latest.counts.csv} CSVs` : "idle"],
-                          ["PPT Agent", latest?.deck_slides ? `${latest.deck_slides}-slide deck` : "no deck"],
-                          ["Space Agent", latest ? "planogram written" : "idle"],
-                        ]
-                    ).map((x) => (
-                      <div key={x[0]} className="rounded-xl bg-[#F7F5F3] p-3">
-                        <p className="text-[10px] font-bold text-[#3680CE]">{x[0]}</p>
-                        <p className="text-xs">{x[1]}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </Card>
-              <Card>
-                <div className="p-5">
-                  <h3 className="text-sm font-bold">Run status</h3>
-                  {(() => {
-                    const done = STEPS.filter(([n]) => stream.steps[n] === "done").length;
-                    const pct = runActive || stream.status === "done" ? Math.round((done / STEPS.length) * 100) : (latest ? 100 : 0);
-                    const line = runActive ? "Live run in progress"
-                      : stream.status === "failed" ? "Last run failed"
-                      : latest ? `${latest.label} · complete` : "No runs yet";
-                    return (
-                      <>
-                        <p className="mt-4 text-xs font-bold">{line}</p>
-                        <p className="text-[10px] text-slate-400">
-                          {runActive ? `${done} of ${STEPS.length} steps` : latest ? "7 of 7 steps" : "—"}
-                        </p>
-                        <div className="mt-4 h-2 rounded-full bg-slate-100">
-                          <div className="h-full rounded-full" style={{ width: `${pct}%`, background: stream.status === "failed" ? "#d33" : C.green }} />
-                        </div>
-                        <button onClick={() => setSection("run")}
-                          className="mt-4 flex items-center gap-1 text-xs font-bold text-[#3680CE]">
-                          View execution timeline <ArrowUpRight size={13} />
-                        </button>
-                      </>
-                    );
-                  })()}
-                </div>
-              </Card>
-            </div>
-          )}
         </main>
 
         {/* copilot */}
@@ -869,7 +625,7 @@ export default function App() {
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendCopilot(); } }}
                     className="ps-scroll flex-1 resize-none px-2 text-xs outline-none" rows={2}
                     placeholder="Ask about this run…" />
-                  <button onClick={() => sendCopilot()} className="rounded-lg bg-[#3680CE] p-2 text-white self-end">
+                  <button onClick={() => sendCopilot()} className="self-end rounded-lg bg-[#3680CE] p-2 text-white">
                     <Send size={15} />
                   </button>
                 </div>
@@ -878,109 +634,174 @@ export default function App() {
           )}
         </AnimatePresence>
       </div>
-
-      {modal && <NewAnalysisModal onClose={() => setModal(false)} onStarted={onRunStarted} />}
     </div>
   );
 }
 
-/* ── Approval Center (localStorage-backed) ─────────────────────────────── */
-function ApprovalCenter({ runs, onOpen }) {
-  const [decisions, setDecisions] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("ps_approvals") || "{}"); } catch { return {}; }
-  });
-  const set = (id, verdict) => {
-    const next = { ...decisions, [id]: { verdict, at: new Date().toISOString() } };
-    setDecisions(next);
-    try { localStorage.setItem("ps_approvals", JSON.stringify(next)); } catch { /* private mode */ }
-  };
-  return (
-    <Card>
-      <div className="p-5">
-        <h3 className="font-bold">Pending approvals</h3>
-        <p className="text-xs text-slate-400">Deck sign-off per run. Recorded in this browser only.</p>
-        <div className="mt-4 space-y-3">
-          {runs.length === 0 && <p className="text-xs text-slate-400">No runs to review.</p>}
-          {runs.map((r) => {
-            const d = decisions[r.id];
-            return (
-              <div key={r.id} className="flex items-center justify-between rounded-xl border p-4">
-                <div>
-                  <button onClick={() => onOpen(r.id)} className="text-sm font-bold hover:text-[#3680CE]">{r.label}</button>
-                  <p className="text-[10px] text-slate-400">
-                    {r.deck_name || "no deck"} · {r.segment_count ?? "—"} segments
-                    {d && ` · ${d.verdict} ${new Date(d.at).toLocaleDateString()}`}
-                  </p>
-                </div>
-                {d ? (
-                  <span className={`rounded-full px-3 py-1 text-[10px] font-bold ${d.verdict === "approved" ? "bg-[#BFDE7D]/60" : "bg-red-100 text-red-600"}`}>
-                    {d.verdict}
-                  </span>
-                ) : (
-                  <div className="flex gap-2">
-                    <Btn className="border border-slate-200" onClick={() => set(r.id, "rejected")}>Reject</Btn>
-                    <Btn className="bg-[#5D910D] text-white" onClick={() => set(r.id, "approved")}>Approve</Btn>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-/* ── Monitoring Hub ───────────────────────────────────────────────────── */
-function MonitoringHub({ runs, live }) {
-  const byMonth = useMemo(() => {
-    const m = {};
-    for (const r of runs) { const k = monthKey(r.ts) || "—"; m[k] = (m[k] || 0) + 1; }
-    return Object.entries(m).sort();
-  }, [runs]);
-  const maxRuns = Math.max(1, ...byMonth.map(([, v]) => v));
+/* ── Output Studio ────────────────────────────────────────────────────── */
+function OutputStudio({ runs, selectedId, setSelectedId, detail, onRefresh }) {
+  const cards = detail?.segment_cards || [];
+  const topSkus = detail?.top_skus || [];
+  const assets = cards.flatMap((c) => c.assets.map((a) => ({ ...a, segment: c.label })));
+  const summ = detail?.summary || {};
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[1.3fr_1fr]">
-      <Card>
-        <div className="p-5">
-          <h3 className="font-bold">Runs over time</h3>
-          <div className="mt-4 flex items-end gap-3">
-            {byMonth.map(([k, v]) => (
-              <div key={k} className="flex flex-1 flex-col items-center">
-                <div className="w-full rounded-t bg-[#3680CE]" style={{ height: `${(v / maxRuns) * 140}px` }} />
-                <span className="mt-1 text-[9px] text-slate-400">{k}</span>
-                <span className="text-[10px] font-bold">{v}</span>
+    <div className="space-y-5">
+      {/* run picker + headline metrics */}
+      <div className="grid gap-5 lg:grid-cols-[1fr_1.4fr]">
+        <RecentOutputs runs={runs} selectedId={selectedId} onPick={setSelectedId} onRefresh={onRefresh} />
+        <Card>
+          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl bg-slate-100 sm:grid-cols-4">
+            {[
+              ["Outlets", fmtInt(summ.outlets)],
+              ["Segments", summ.segment_count ?? "—"],
+              ["Priority tiers", summ.priority_tiers ?? "—"],
+              ["Total VPO", fmtRupee(summ.total_vpo)],
+            ].map(([k, v]) => (
+              <div key={k} className="bg-white p-4">
+                <p className="text-[10px] uppercase text-slate-400">{k}</p>
+                <p className="mt-1 text-lg font-black">{v}</p>
               </div>
             ))}
-            {byMonth.length === 0 && <p className="text-xs text-slate-400">No runs recorded.</p>}
           </div>
-        </div>
-      </Card>
-      <Card>
-        <div className="p-5">
-          <h3 className="font-bold">Latest run health</h3>
-          {runs[0] ? (
-            <div className="mt-4 space-y-2 text-xs">
-              <Row label="Run" value={runs[0].label} />
-              <Row label="Outlets" value={fmtInt(runs[0].outlets)} />
-              <Row label="Segments" value={runs[0].segment_count ?? "—"} />
-              <Row label="Deck" value={runs[0].deck_slides ? `${runs[0].deck_slides} slides` : "—"} />
-              <Row label="Total VPO" value={fmtRupee(runs[0].total_vpo)} />
-              <Row label="Live run" value={live ? live.status : "none"} />
+        </Card>
+      </div>
+
+      {!detail && <p className="text-xs text-slate-400">Loading run…</p>}
+
+      {detail && (
+        <>
+          {/* Segmentation agent — refined segments */}
+          <Card>
+            <div className="p-5">
+              <div className="flex items-center gap-2">
+                <div className="grid h-7 w-7 place-items-center rounded-lg text-white" style={{ background: C.darkBlue }}>
+                  <Store size={14} />
+                </div>
+                <h3 className="font-bold">Segmentation agent — refined segments</h3>
+              </div>
+              {cards.length === 0 ? (
+                <p className="mt-3 text-xs text-slate-400">No segment cards in this run.</p>
+              ) : (
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {cards.map((c) => (
+                    <div key={c.cluster} className="rounded-xl border border-slate-100 p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-xs font-black leading-snug">{c.label}</p>
+                        <Chip tone={c.growth === "High" ? "green" : c.growth === "Medium" ? "amber" : "slate"}>{c.growth || "—"}</Chip>
+                      </div>
+                      <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-[#3680CE]">
+                        {c.channel} · {c.occasion}
+                      </p>
+                      <p className="mt-2 text-[11px] text-slate-500">{c.headline}</p>
+                      {c.hero_skus.length > 0 && (
+                        <div className="mt-3">
+                          <p className="text-[9px] font-bold uppercase text-slate-400">Hero SKUs</p>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {c.hero_skus.map((s) => <Chip key={s} tone="blue">{s}</Chip>)}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          ) : <p className="mt-4 text-xs text-slate-400">No runs yet.</p>}
-          <p className="mt-4 text-[10px] text-slate-400">
-            Adoption &amp; in-market impact tiles need a downstream feedback source — not wired in this build.
-          </p>
-        </div>
-      </Card>
+          </Card>
+
+          <div className="grid gap-5 lg:grid-cols-2">
+            {/* MSL agent — top SKUs across segments */}
+            <Card>
+              <div className="p-5">
+                <div className="flex items-center gap-2">
+                  <div className="grid h-7 w-7 place-items-center rounded-lg text-white" style={{ background: C.yellow }}>
+                    <Zap size={14} />
+                  </div>
+                  <h3 className="font-bold">MSL agent — top SKUs across segments</h3>
+                </div>
+                {topSkus.length === 0 ? (
+                  <p className="mt-3 text-xs text-slate-400">No hero-SKU data in this run.</p>
+                ) : (
+                  <ol className="mt-4 space-y-2">
+                    {topSkus.map((t, i) => (
+                      <li key={t.sku} className="flex items-center gap-3 rounded-xl bg-[#F7F5F3] p-3">
+                        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#02355A] text-[10px] font-bold text-white">
+                          {i + 1}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold">{t.sku}</p>
+                          <p className="truncate text-[10px] text-slate-400">{t.segments.join(" · ")}</p>
+                        </div>
+                        <Chip tone={t.count > 1 ? "green" : "slate"}>{t.count} seg{t.count > 1 ? "s" : ""}</Chip>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            </Card>
+
+            {/* Recommended assets (merch & space) */}
+            <Card>
+              <div className="p-5">
+                <div className="flex items-center gap-2">
+                  <div className="grid h-7 w-7 place-items-center rounded-lg text-white" style={{ background: C.green }}>
+                    <Package size={14} />
+                  </div>
+                  <h3 className="font-bold">Recommended assets — merch &amp; space</h3>
+                </div>
+                {assets.length === 0 ? (
+                  <p className="mt-3 text-xs text-slate-400">No merch/space actions called out.</p>
+                ) : (
+                  <ul className="mt-4 space-y-2">
+                    {assets.map((a, i) => (
+                      <li key={i} className="rounded-xl border border-slate-100 p-3">
+                        <p className="text-xs font-semibold">{a.text}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <Chip tone="blue">{a.segment}</Chip>
+                          {a.kpi && <span className="text-[10px] text-slate-400">KPI: {a.kpi}</span>}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Card>
+          </div>
+
+          {/* Charts from segmentation + MSL */}
+          {detail.charts?.length > 0 && (
+            <Card>
+              <div className="p-5">
+                <h3 className="font-bold">Charts</h3>
+                <div className="ps-scroll mt-3 flex gap-3 overflow-x-auto pb-2">
+                  {detail.charts.map((c) => (
+                    <img key={c} src={`/api/runs/${selectedId}/chart/${encodeURIComponent(c)}`} alt={c}
+                      className="h-52 shrink-0 rounded-lg ring-1 ring-slate-200" loading="lazy" />
+                  ))}
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Deliverables */}
+          <Card>
+            <div className="p-5">
+              <h3 className="font-bold">Deliverables</h3>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {(detail.files || []).map((f) => (
+                  <a key={f.name} href={`/api/runs/${selectedId}/file/${encodeURIComponent(f.name)}`}
+                    className="flex items-center justify-between rounded-xl border border-slate-100 p-3 hover:border-[#3680CE]">
+                    <span className="truncate text-xs font-semibold">{f.name}</span>
+                    <span className="ml-3 shrink-0 text-[10px] text-slate-400">
+                      {f.slides ? `${f.slides} sl · ` : ""}{f.size_h}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          </Card>
+        </>
+      )}
     </div>
   );
 }
-
-const Row = ({ label, value }) => (
-  <div className="flex justify-between border-b border-slate-100 py-1.5">
-    <span className="text-slate-400">{label}</span><span className="font-semibold">{value}</span>
-  </div>
-);
