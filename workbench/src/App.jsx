@@ -130,6 +130,10 @@ function useRunStream(streamKey) {
         if (ev.kind === "end") {
           es.close();
           const steps = { ...s.steps };
+          if (ev.aborted) {
+            for (const [n] of STEPS) if (steps[n] === "running") delete steps[n];
+            return { ...s, status: "aborted", steps };
+          }
           if (!ev.error) for (const [n] of STEPS) steps[n] = "done";
           return { ...s, status: ev.error ? "failed" : "done", steps, outputDir: ev.output_dir };
         }
@@ -195,6 +199,7 @@ function HorizontalPipeline({ steps, detail, status }) {
         {status === "running" || status === "connecting" ? "Executing…"
           : status === "done" ? "Run complete"
           : status === "failed" ? "Run failed — see log"
+          : status === "aborted" ? "Run aborted"
           : "Idle"}
       </p>
     </div>
@@ -307,6 +312,7 @@ export default function App() {
   const [execUseSample, setExecUseSample] = useState(true);
   const [execBusy, setExecBusy] = useState(false);
   const [execErr, setExecErr] = useState(null);
+  const [aborting, setAborting] = useState(false);
   const addFileRef = useRef(null);
 
   const stream = useRunStream(streamKey);
@@ -352,6 +358,18 @@ export default function App() {
     } catch (e) { setExecErr(e.message); }
     setExecBusy(false);
   };
+
+  const abortRun = async () => {
+    setAborting(true); setExecErr(null);
+    try {
+      await api.post("/api/runs/active/abort", {});
+    } catch (e) { setExecErr(e.message); }
+  };
+
+  // clear the "aborting" flag once the run actually ends
+  useEffect(() => {
+    if (!runActive) setAborting(false);
+  }, [runActive]);
 
   const addDataFile = async (f) => {
     if (!f) return;
@@ -510,6 +528,15 @@ export default function App() {
                             : execBusy ? "Starting…"
                             : <><Play size={14} className="mr-2 inline" />Execute pipeline</>}
                         </Btn>
+                        {runActive && (
+                          <Btn className="bg-white text-[#d33] ring-1 ring-[#d33]/40 hover:bg-red-50"
+                            disabled={aborting} onClick={abortRun}
+                            title="Stops the pipeline at the next step boundary">
+                            {aborting
+                              ? <><Loader2 size={14} className="mr-2 inline animate-spin" />Aborting…</>
+                              : <><X size={14} className="mr-2 inline" />Abort</>}
+                          </Btn>
+                        )}
                       </div>
                       {selectedInbox?.kind === "reference" && (
                         <p className="mt-2 text-[11px] font-semibold text-[#EB9F0A]">

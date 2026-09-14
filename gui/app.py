@@ -62,6 +62,7 @@ def _init_state() -> None:
     ss.setdefault("runner", None)
     ss.setdefault("run_active", False)
     ss.setdefault("run_done", False)
+    ss.setdefault("abort_requested", False)
     ss.setdefault("prev_active", False)
     ss.setdefault("steps", {n: "pending" for n in STEP_ORDER})
     ss.setdefault("details", {n: "" for n in STEP_ORDER})
@@ -80,6 +81,7 @@ def _reset_progress() -> None:
     ss.step_elapsed = {}
     ss.logs = []
     ss.run_done = False
+    ss.abort_requested = False
 
 
 def _close_step_timer(n: int) -> None:
@@ -117,7 +119,13 @@ def _apply_events(events: list[dict]) -> None:
         elif kind == "end":
             ss.run_active = False
             runner: PipelineRunner = ss.runner
-            if runner and runner.error:
+            if runner and getattr(runner, "aborted", False):
+                # leave completed steps as-is; freeze any running step
+                for k in STEP_ORDER:
+                    if ss.steps.get(k) == "running":
+                        ss.steps[k] = "pending"
+                        _close_step_timer(k)
+            elif runner and runner.error:
                 ss.logs.append("── TRACEBACK " + "─" * 40)
                 ss.logs.extend(runner.error.splitlines())
             elif runner and not runner.error:
@@ -125,7 +133,8 @@ def _apply_events(events: list[dict]) -> None:
                 for k in STEP_ORDER:
                     ss.steps[k] = "done"
                     _close_step_timer(k)
-            if runner and runner.output_dir:
+            if (runner and runner.output_dir
+                    and not getattr(runner, "aborted", False)):
                 ss.last_run_dir = runner.output_dir
                 ss.view_run = runner.output_dir
 
@@ -134,6 +143,8 @@ def _status() -> str:
     ss = st.session_state
     if ss.run_active:
         return "running"
+    if ss.runner and getattr(ss.runner, "aborted", False):
+        return "aborted"
     if ss.runner and getattr(ss.runner, "error", None):
         return "failed"
     if ss.run_done:
@@ -270,6 +281,26 @@ def _build_steps_model() -> list[dict]:
     return model
 
 
+def _abort_control(runner: "PipelineRunner | None") -> None:
+    """Abort button shown while a run is active. Cooperative: the pipeline stops
+    at its next step boundary (see pipeline.run_pipeline cancel_check)."""
+    ss = st.session_state
+    if runner is None:
+        return
+    pending = ss.get("abort_requested") or getattr(runner, "cancelling", False)
+    clicked = st.button("⏹  Abort run", type="secondary", width="stretch",
+                        key="abort_run", disabled=pending,
+                        help="Stops the pipeline at the next step boundary. "
+                             "The current step finishes first.")
+    if clicked:
+        runner.cancel()
+        ss.abort_requested = True
+        st.toast("Abort requested — the run will stop after the current step.")
+        st.rerun(scope="fragment")
+    if pending:
+        st.caption("⏳ Aborting — waiting for the current step to finish…")
+
+
 def _progress_view() -> None:
     ss = st.session_state
     if ss.run_active and ss.runner is not None:
@@ -282,9 +313,14 @@ def _progress_view() -> None:
         if status == "running":
             ui.callout("info", "Pipeline running",
                        f"Elapsed {runner.elapsed if runner else '0s'}")
+            _abort_control(runner)
         elif status == "done":
             ui.callout("info", "Run complete",
                        f"Finished in {runner.elapsed if runner else '—'}")
+        elif status == "aborted":
+            ui.callout("warn", "Run aborted",
+                       f"Stopped by user after {runner.elapsed if runner else '—'}. "
+                       f"Partial outputs (if any) are not published.")
         elif status == "failed":
             last = runner.error.strip().splitlines()[-1][:280] if runner else ""
             ui.callout("error", "Run failed", last)

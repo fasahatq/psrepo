@@ -46,6 +46,8 @@ class PipelineRunner:
         self.error: str | None = None
         self.run_id: str | None = None
         self.output_dir: str | None = None
+        self._cancel = threading.Event()
+        self.aborted = False
 
     # -- callback handed to run_pipeline -------------------------------------
     def _on_step(self, step: int, name: str, status: str, detail: str = "") -> None:
@@ -64,7 +66,7 @@ class PipelineRunner:
     # -- lifecycle --------------------------------------------------------------
     def start(self, file_path: str, project_root: str,
               sample_size: int | None) -> None:
-        from pipeline import run_pipeline
+        from pipeline import run_pipeline, PipelineAborted
 
         self.started_at = datetime.now()
         handler = _QueueLogHandler(self.q)
@@ -78,7 +80,13 @@ class PipelineRunner:
                     file_path, project_root,
                     sample_size=sample_size,
                     progress_callback=self._on_step,
+                    cancel_check=self._cancel.is_set,
                 )
+            except PipelineAborted as exc:
+                self.aborted = True
+                self.q.put({"kind": "log", "level": "WARNING", "name": "pipeline",
+                            "msg": str(exc),
+                            "ts": datetime.now().strftime("%H:%M:%S")})
             except Exception:
                 self.error = traceback.format_exc()
                 self.q.put({"kind": "log", "level": "ERROR", "name": "pipeline",
@@ -104,6 +112,16 @@ class PipelineRunner:
             except queue.Empty:
                 break
         return events
+
+    def cancel(self) -> None:
+        """Request a cooperative abort. The pipeline stops at its next step
+        boundary and raises PipelineAborted, which _target catches."""
+        self._cancel.set()
+
+    @property
+    def cancelling(self) -> bool:
+        """True once an abort was requested but the run hasn't ended yet."""
+        return self._cancel.is_set() and not self.finished.is_set()
 
     @property
     def is_running(self) -> bool:

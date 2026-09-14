@@ -40,6 +40,7 @@ h1,h2,h3,h4 {letter-spacing:-0.01em;}
 .ps-pill.running {background:#fef3c7; color:#92400e;}
 .ps-pill.done {background:#dcfce7; color:#166534;}
 .ps-pill.failed {background:#fee2e2; color:#991b1b;}
+.ps-pill.aborted {background:#ffedd5; color:#9a3412;}
 
 /* ── vertical stepper ─────────────────────────────────────────────── */
 .ps-stepper {display:flex; flex-direction:column;}
@@ -90,9 +91,9 @@ def inject_css() -> None:
 
 
 def header(status: str = "idle") -> None:
-    """status ∈ idle | running | done | failed"""
+    """status ∈ idle | running | done | failed | aborted"""
     labels = {"idle": "Idle", "running": "Running", "done": "Complete",
-              "failed": "Failed"}
+              "failed": "Failed", "aborted": "Aborted"}
     st.markdown(
         f"""<div class="ps-header">
           <div class="ps-brand">

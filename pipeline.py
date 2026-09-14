@@ -26,6 +26,15 @@ from agents.space_allocation_agent import run_space_allocation
 logger = logging.getLogger("perfect_store.pipeline")
 
 
+class PipelineAborted(RuntimeError):
+    """Raised inside run_pipeline when a caller-supplied ``cancel_check`` returns True.
+
+    The Streamlit GUI's Abort button (see gui/runner.py) sets a threading.Event
+    and passes its ``.is_set`` as ``cancel_check``; the run then stops cleanly at
+    the next step boundary instead of being force-killed.
+    """
+
+
 # ── Config & data loading ────────────────────────────────────────────────────
 
 def load_config(project_root: str) -> dict:
@@ -233,7 +242,8 @@ def _notify(callback, step: int, name: str, status: str, detail: str = ""):
 
 
 def run_pipeline(file_path: str, project_root: str = None,
-                 sample_size: int = None, progress_callback=None):
+                 sample_size: int = None, progress_callback=None,
+                 cancel_check=None):
     """
     Run the full pipeline for a single file.
     Args:
@@ -243,6 +253,9 @@ def run_pipeline(file_path: str, project_root: str = None,
         progress_callback: optional callable(step:int, name:str, status:str,
                            detail:str) invoked as each step starts/finishes.
                            Consumed by the Streamlit GUI (gui/app.py).
+        cancel_check     : optional callable() -> bool. Polled at every step
+                           boundary; when it returns True the run stops by
+                           raising PipelineAborted. Used by the GUI Abort button.
     """
     if project_root is None:
         project_root = os.path.dirname(os.path.abspath(__file__))
@@ -282,6 +295,15 @@ def run_pipeline(file_path: str, project_root: str = None,
 
     display_model = model
 
+    def _abort_point(stage: str) -> None:
+        """Stop the run if the caller requested cancellation before ``stage``."""
+        if cancel_check is not None and cancel_check():
+            logger.warning(f"Run aborted by user — stopping before {stage} "
+                           f"(run_id={run_id})")
+            _notify(progress_callback, 0, "aborted", "done",
+                    detail=json.dumps({"stage": stage, "run_id": run_id}))
+            raise PipelineAborted(f"Run aborted by user before {stage}")
+
     _notify(progress_callback, 0, "init", "start",
             detail=json.dumps({"run_id": run_id, "output_dir": output_dir,
                                "file": file_path, "data_mode": data_mode,
@@ -295,6 +317,7 @@ def run_pipeline(file_path: str, project_root: str = None,
     logger.info("=" * 65)
 
     # ── Step 1: Load ─────────────────────────────────────────────────────
+    _abort_point("data load")
     logger.info("Step 1/7 — Loading data")
     _notify(progress_callback, 1, "Load data", "running")
     df = load_data(file_path, sample_size=sample_size)
@@ -307,6 +330,7 @@ def run_pipeline(file_path: str, project_root: str = None,
         df = _aggregate_sku_to_outlet(df, project_root=project_root)
 
     # ── Step 2: Data Quality ─────────────────────────────────────────────
+    _abort_point("data-quality checks")
     logger.info("Step 2/7 — Running DQ checks")
     _notify(progress_callback, 2, "Data quality checks", "running")
     dq_results = run_dq_checks(df, config)
@@ -360,6 +384,7 @@ def run_pipeline(file_path: str, project_root: str = None,
     # ── Step 3: Prioritization ────────────────────────────────────────────
     # Runs before segmentation so priority_bucket is available as a
     # clustering feature, producing commercially-aligned segments.
+    _abort_point("prioritization")
     logger.info("Step 3/7 — Prioritization (A/B/C/D + opportunity gap)")
     _notify(progress_callback, 3, "Prioritization", "running")
     df_out, priority_narrative = run_prioritization(
@@ -384,6 +409,7 @@ def run_pipeline(file_path: str, project_root: str = None,
     # ── Step 4: Segmentation ──────────────────────────────────────────────
     # Receives df_out which already carries priority_bucket / priority columns,
     # allowing segmentation to use priority tier as a clustering signal.
+    _abort_point("segmentation")
     logger.info("Step 4/7 — Segmentation")
     _notify(progress_callback, 4, "Segmentation", "running")
     df_out, labels = run_segmentation(
@@ -419,6 +445,7 @@ def run_pipeline(file_path: str, project_root: str = None,
     _log_segment_history(run_id, log_dir, labels)
 
     # ── Step 5: MSL Generation ────────────────────────────────────────────
+    _abort_point("MSL generation")
     logger.info("Step 5/7 — MSL Generation")
     _notify(progress_callback, 5, "MSL generation", "running")
     sku_file = config.get("sku_file", "India_Synthetic_SKU_Data.csv")
@@ -434,6 +461,7 @@ def run_pipeline(file_path: str, project_root: str = None,
         _notify(progress_callback, 5, "MSL generation", "done", detail="skipped")
 
     # ── Step 6: Outputs ───────────────────────────────────────────────────
+    _abort_point("output generation")
     logger.info("Step 6/7 — Generating outputs")
     _notify(progress_callback, 6, "Generate outputs", "running")
     outputs = generate_outputs(df_out, labels, dq_report, output_dir,
@@ -443,6 +471,7 @@ def run_pipeline(file_path: str, project_root: str = None,
             detail=f"{len(outputs.get('csv_files', []))} CSVs + Excel + PPTX")
 
     # ── Step 7: Space Allocation ──────────────────────────────────────────
+    _abort_point("space allocation")
     logger.info("Step 7/7 — Space Allocation")
     _notify(progress_callback, 7, "Space allocation", "running")
     space_alloc_path = None

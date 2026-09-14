@@ -35,7 +35,8 @@ app = FastAPI(title="Perfect Store AI Workbench API", version="1.0.0")
 # Vite dev server origin — harmless on localhost, convenient if the proxy is off.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173",
+                   "http://localhost:5174", "http://127.0.0.1:5174"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -130,6 +131,17 @@ def post_run(body: StartRunBody) -> dict:
     return runner.snapshot()
 
 
+@app.post("/api/runs/active/abort")
+def abort_active_run() -> dict:
+    """Cooperatively cancel the in-flight run. It stops at the next pipeline
+    step boundary; the step already running finishes first."""
+    r = current_run()
+    if r is None or not r.is_running:
+        raise HTTPException(409, "no run is in progress")
+    r.cancel()
+    return r.snapshot()
+
+
 @app.get("/api/runs/{run_id}")
 def get_run(run_id: str) -> dict:
     try:
@@ -188,3 +200,25 @@ def post_copilot(body: CopilotBody) -> dict:
 # ── helpers ──────────────────────────────────────────────────────────────────
 def _sse(obj: dict) -> str:
     return f"data: {json.dumps(obj)}\n\n"
+
+
+# ── static frontend (production build) ───────────────────────────────────────
+# If `workbench/dist/` exists (from `npm run build`), serve the built SPA from
+# this same process so the whole app is on one port with no dev-server / proxy.
+# Every /api/* route is declared above, so they win; anything else falls through
+# to the SPA (index.html) for client-side routing.
+_DIST = Path(__file__).resolve().parent.parent / "dist"
+if _DIST.is_dir():
+    from fastapi.responses import HTMLResponse  # noqa: E402
+    from starlette.staticfiles import StaticFiles  # noqa: E402
+
+    _INDEX = (_DIST / "index.html").read_text(encoding="utf-8")
+
+    app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
+
+    @app.get("/{full_path:path}", response_class=HTMLResponse, include_in_schema=False)
+    def spa(full_path: str):
+        candidate = (_DIST / full_path)
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return HTMLResponse(_INDEX)

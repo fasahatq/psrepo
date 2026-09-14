@@ -58,6 +58,8 @@ class PipelineRunner:
         self.source_file: str | None = None
         self.sample_size: int | None = None
         self.meta: dict = {}
+        self._cancel = threading.Event()
+        self.aborted = False
         # replayable history so a client that connects mid-run still gets the
         # full picture.
         self._history: list[dict] = []
@@ -85,7 +87,7 @@ class PipelineRunner:
 
     # -- lifecycle -----------------------------------------------------------
     def start(self, file_path: str, sample_size: int | None) -> None:
-        from pipeline import run_pipeline
+        from pipeline import run_pipeline, PipelineAborted
 
         self.source_file = os.path.basename(file_path)
         self.sample_size = sample_size
@@ -121,7 +123,13 @@ class PipelineRunner:
                     file_path, PROJECT_ROOT,
                     sample_size=sample_size,
                     progress_callback=self._on_step,
+                    cancel_check=self._cancel.is_set,
                 )
+            except PipelineAborted as exc:
+                self.aborted = True
+                self._emit({"kind": "log", "level": "WARNING", "name": "pipeline",
+                            "msg": str(exc),
+                            "ts": datetime.now().strftime("%H:%M:%S")})
             except Exception:
                 self.error = traceback.format_exc()
                 self._emit({"kind": "log", "level": "ERROR", "name": "pipeline",
@@ -135,6 +143,7 @@ class PipelineRunner:
                     self.output_dir = self.result.get("output_dir", self.output_dir)
                 self.finished.set()
                 self._emit({"kind": "end", "error": bool(self.error),
+                            "aborted": self.aborted,
                             "traceback": self.error or "",
                             "output_dir": os.path.basename(self.output_dir)
                             if self.output_dir else None})
@@ -182,6 +191,15 @@ class PipelineRunner:
                 return
             time.sleep(poll)
 
+    def cancel(self) -> None:
+        """Request a cooperative abort. The pipeline stops at its next step
+        boundary and raises PipelineAborted, which _target catches."""
+        self._cancel.set()
+
+    @property
+    def cancelling(self) -> bool:
+        return self._cancel.is_set() and not self.finished.is_set()
+
     @property
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -190,6 +208,8 @@ class PipelineRunner:
     def status(self) -> str:
         if self.is_running:
             return "running"
+        if self.aborted:
+            return "aborted"
         if self.error:
             return "failed"
         if self.finished.is_set():
@@ -213,6 +233,7 @@ class PipelineRunner:
             "elapsed_secs": self.elapsed_secs,
             "meta": self.meta,
             "error": self.error,
+            "aborted": self.aborted,
         }
 
 
