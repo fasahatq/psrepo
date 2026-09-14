@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  BarChart3, Bell, Bot, CheckCircle2, ChevronDown, ChevronRight,
-  Download, FileBarChart2, FileText, Globe2, LayoutDashboard, Loader2, MessageSquareText,
-  Package, Play, RefreshCw, Search, Send, ShieldCheck, Sparkles, Store, UploadCloud, X, Zap,
+  BarChart3, Bell, Bot, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
+  DollarSign, Download, FileBarChart2, FileText, Globe2, LayoutDashboard, Loader2,
+  MessageSquareText, Package, Play, RefreshCw, Search, Send, ShieldCheck, Sparkles,
+  Store, UploadCloud, X, Zap,
 } from "lucide-react";
 
 /* ── brand ──────────────────────────────────────────────────────────────── */
@@ -20,25 +21,27 @@ const navItems = [
 
 const MARKETS = ["India", "Mexico", "Brazil"];
 
-/* 7 pipeline steps — labels mirror gui/steps.py STEP_META */
+/* Pipeline steps shown in the horizontal strip — labels mirror gui/steps.py STEP_META.
+   Step 1 (Load) is intentionally not shown; the pipeline still loads data first
+   internally, it's just not rendered as a visible stage. Step 6/7 order matches
+   pipeline.py: Space allocation now runs before the final Outputs and Inferences step. */
 const STEPS = [
-  [1, "Load"],
   [2, "Data quality"],
   [3, "Prioritization"],
   [4, "Segmentation"],
   [5, "MSL"],
-  [6, "Outputs"],
-  [7, "Space allocation"],
+  [6, "Space allocation"],
+  [7, "Outputs and Inferences"],
 ];
 
-/* Agent Hub — one card per pipeline agent (agents/*.py) */
+/* Agent Hub — one card per pipeline agent (agents/*.py), in execution order */
 const AGENTS = [
   ["Data Quality Agent", "dq_agent", [2], CheckCircle2, C.green],
   ["Prioritization Agent", "prioritization_agent", [3], BarChart3, C.blue],
   ["Segmentation Agent", "segmentation_agent", [4], Store, C.darkBlue],
   ["MSL Agent", "msl_generator", [5], Zap, C.yellow],
-  ["Output Agent", "output_agent", [6], FileText, C.blue],
-  ["Space Allocation Agent", "space_allocation_agent", [7], LayoutDashboard, C.darkBlue],
+  ["Space Allocation Agent", "space_allocation_agent", [6], LayoutDashboard, C.darkBlue],
+  ["Output Agent", "output_agent", [7], FileText, C.blue],
 ];
 
 /* ── api helpers ────────────────────────────────────────────────────────── */
@@ -70,6 +73,7 @@ const api = {
 
 const fmtInt = (n) => (n == null ? "—" : Number(n).toLocaleString("en-IN"));
 const fmtRupee = (n) => (n == null ? "—" : "₹" + Math.round(Number(n)).toLocaleString("en-IN"));
+const fmtUsd = (n) => (n == null ? "—" : "$" + Math.round(Number(n)).toLocaleString("en-US"));
 
 /* ── data hooks ─────────────────────────────────────────────────────────── */
 function useHealth() {
@@ -308,8 +312,6 @@ export default function App() {
   // execute-pipeline controls (inline in Market Workspace)
   const [inbox, setInbox] = useState(null);
   const [execFile, setExecFile] = useState("");
-  const [execSample, setExecSample] = useState(5000);
-  const [execUseSample, setExecUseSample] = useState(true);
   const [execBusy, setExecBusy] = useState(false);
   const [execErr, setExecErr] = useState(null);
   const [aborting, setAborting] = useState(false);
@@ -353,7 +355,8 @@ export default function App() {
   const execute = async () => {
     setExecBusy(true); setExecErr(null);
     try {
-      await api.post("/api/runs", { file: execFile, sample_size: execUseSample ? Number(execSample) : null });
+      // Always the full dataset — no sampling.
+      await api.post("/api/runs", { file: execFile, sample_size: null });
       setStreamKey((k) => k + 1);
     } catch (e) { setExecErr(e.message); }
     setExecBusy(false);
@@ -393,7 +396,7 @@ export default function App() {
       });
       setMessages((m) => [...m, { role: "ai", text: res.text }]);
     } catch (e) {
-      setMessages((m) => [...m, { role: "ai", text: `Copilot error: ${e.message}` }]);
+      setMessages((m) => [...m, { role: "ai", text: `Assistant error: ${e.message}` }]);
     }
     setSending(false);
   };
@@ -412,7 +415,7 @@ export default function App() {
         <div className="flex items-center gap-3">
           <div className="grid h-9 w-9 place-items-center rounded-full bg-[#3680CE]"><Sparkles size={18} /></div>
           <div>
-            <h1 className="font-bold">Perfect Store AI Workbench</h1>
+            <h1 className="font-bold">Agentic Perfect Store Design</h1>
             <p className="text-[10px] tracking-wide text-[#A6CBF0]">OUTPUTS · AGENTS · GOVERNANCE</p>
           </div>
         </div>
@@ -475,7 +478,7 @@ export default function App() {
                   <p className="text-xs font-bold uppercase text-[#3680CE]">{sectionTitle}</p>
                   <h2 className="mt-1 text-2xl font-black">{sectionHeading}</h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    {section === "workspace" ? "Execute the pipeline and preview the leadership deck as it is generated."
+                    {section === "workspace" ? "Execute Perfect Store Analytics and Agentic Inference"
                       : section === "outputs" ? "A crisp view of what the Segmentation and MSL agents recommend."
                       : "Status of each specialist agent in the run."}
                   </p>
@@ -513,16 +516,6 @@ export default function App() {
                             ))}
                           </select>
                         </div>
-                        <label className="flex items-center gap-2 pb-2 text-xs font-semibold">
-                          <input type="checkbox" checked={execUseSample} disabled={runActive}
-                            onChange={(e) => setExecUseSample(e.target.checked)} />
-                          Sample
-                        </label>
-                        {execUseSample && (
-                          <input type="number" min={500} step={500} value={execSample} disabled={runActive}
-                            onChange={(e) => setExecSample(e.target.value)}
-                            className="w-24 rounded-xl border border-slate-200 p-2 text-sm" />
-                        )}
                         <Btn className="bg-[#3680CE] text-white" disabled={runActive || execBusy || !execFile} onClick={execute}>
                           {runActive ? <><Loader2 size={14} className="mr-2 inline animate-spin" />Running…</>
                             : execBusy ? "Starting…"
@@ -625,7 +618,7 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <Bot size={20} />
                   <div>
-                    <p className="text-sm font-bold">Perfect Store Copilot</p>
+                    <p className="text-sm font-bold">Perfect Store Assistant</p>
                     <p className="text-[10px] text-[#A6CBF0]">
                       {health ? `${health.llm_backend} · ${health.model}` : "grounded on run data"}
                     </p>
@@ -665,6 +658,110 @@ export default function App() {
   );
 }
 
+/* ── Segmentation agent — one big card per segment, Prev/Next navigation ── */
+function SegmentCarousel({ cards, runId }) {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => { setIdx(0); }, [runId]);
+
+  if (cards.length === 0) {
+    return (
+      <Card>
+        <div className="p-5">
+          <h3 className="font-bold">Segmentation agent — refined segments</h3>
+          <p className="mt-3 text-xs text-slate-400">No segment cards in this run.</p>
+        </div>
+      </Card>
+    );
+  }
+
+  const c = cards[Math.min(idx, cards.length - 1)];
+
+  return (
+    <Card>
+      <div className="p-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="grid h-7 w-7 place-items-center rounded-lg text-white" style={{ background: C.darkBlue }}>
+              <Store size={14} />
+            </div>
+            <h3 className="font-bold">Segmentation agent — refined segments</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setIdx((i) => Math.max(0, i - 1))} disabled={idx === 0}
+              className="grid h-8 w-8 place-items-center rounded-full border border-slate-200 disabled:opacity-30">
+              <ChevronLeft size={16} />
+            </button>
+            <span className="text-[11px] font-semibold text-slate-400">Segment {idx + 1} of {cards.length}</span>
+            <button onClick={() => setIdx((i) => Math.min(cards.length - 1, i + 1))} disabled={idx === cards.length - 1}
+              className="grid h-8 w-8 place-items-center rounded-full border border-slate-200 disabled:opacity-30">
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-5 md:grid-cols-[280px_1fr]">
+          <div>
+            <img src={`/api/runs/${runId}/chart/radar_cluster_${c.cluster}.png`} alt={`${c.label} radar`}
+              className="w-full rounded-xl ring-1 ring-slate-200" loading="lazy"
+              onError={(e) => { e.currentTarget.style.display = "none"; }} />
+          </div>
+
+          <div>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="text-lg font-black leading-snug">{c.label}</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-[#3680CE]">{c.channel} · {c.occasion}</p>
+              </div>
+              <Chip tone={c.growth === "High" ? "green" : c.growth === "Medium" ? "amber" : "slate"}>{c.growth || "—"} growth</Chip>
+            </div>
+            {c.snapshot && <p className="mt-2 text-xs text-slate-500">{c.snapshot}</p>}
+            {c.dominant_sec && <p className="mt-1 text-[10px] text-slate-400">Dominant SEC: {c.dominant_sec}</p>}
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="rounded-xl bg-[#BFDE7D]/30 p-3">
+                <p className="flex items-center gap-1 text-[9px] font-bold uppercase text-[#3f6108]"><DollarSign size={11} />Upside potential</p>
+                <p className="mt-1 text-base font-black">{fmtUsd(c.upside_usd_monthly)}<span className="ml-1 text-[10px] font-semibold text-slate-400">/mo</span></p>
+              </div>
+              <div className="rounded-xl bg-[#A6CBF0]/30 p-3">
+                <p className="flex items-center gap-1 text-[9px] font-bold uppercase text-[#155798]"><DollarSign size={11} />Revenue impact</p>
+                <p className="mt-1 text-base font-black">{fmtUsd(c.revenue_impact_usd_annual)}<span className="ml-1 text-[10px] font-semibold text-slate-400">/yr</span></p>
+              </div>
+            </div>
+
+            {c.hero_skus.length > 0 && (
+              <div className="mt-3">
+                <p className="text-[9px] font-bold uppercase text-slate-400">Top SKUs</p>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {c.hero_skus.map((s) => <Chip key={s} tone="blue">{s}</Chip>)}
+                </div>
+              </div>
+            )}
+
+            {c.actions.length > 0 && (
+              <div className="mt-3">
+                <p className="text-[9px] font-bold uppercase text-slate-400">Commercial actions</p>
+                <ul className="mt-1 space-y-1">
+                  {c.actions.map((a, i) => (
+                    <li key={i} className="flex items-start gap-2 text-[11px]">
+                      {a.is_asset
+                        ? <Package size={12} className="mt-0.5 shrink-0 text-[#5D910D]" />
+                        : <Zap size={12} className="mt-0.5 shrink-0 text-[#3680CE]" />}
+                      <span>
+                        <span className="font-semibold">{a.lever}:</span> {a.text}
+                        {a.kpi && <span className="text-slate-400"> · KPI: {a.kpi}</span>}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 /* ── Output Studio ────────────────────────────────────────────────────── */
 function OutputStudio({ runs, selectedId, setSelectedId, detail, onRefresh }) {
   const cards = detail?.segment_cards || [];
@@ -674,67 +771,28 @@ function OutputStudio({ runs, selectedId, setSelectedId, detail, onRefresh }) {
 
   return (
     <div className="space-y-5">
-      {/* run picker + headline metrics */}
-      <div className="grid gap-5 lg:grid-cols-[1fr_1.4fr]">
-        <RecentOutputs runs={runs} selectedId={selectedId} onPick={setSelectedId} onRefresh={onRefresh} />
-        <Card>
-          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl bg-slate-100 sm:grid-cols-4">
-            {[
-              ["Outlets", fmtInt(summ.outlets)],
-              ["Segments", summ.segment_count ?? "—"],
-              ["Priority tiers", summ.priority_tiers ?? "—"],
-              ["Total VPO", fmtRupee(summ.total_vpo)],
-            ].map(([k, v]) => (
-              <div key={k} className="bg-white p-4">
-                <p className="text-[10px] uppercase text-slate-400">{k}</p>
-                <p className="mt-1 text-lg font-black">{v}</p>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-
       {!detail && <p className="text-xs text-slate-400">Loading run…</p>}
 
       {detail && (
         <>
-          {/* Segmentation agent — refined segments */}
+          {/* Ribbon — outlets segmented / segments / priority tiers */}
           <Card>
-            <div className="p-5">
-              <div className="flex items-center gap-2">
-                <div className="grid h-7 w-7 place-items-center rounded-lg text-white" style={{ background: C.darkBlue }}>
-                  <Store size={14} />
+            <div className="grid grid-cols-3 divide-x divide-slate-100">
+              {[
+                ["Outlets segmented", fmtInt(summ.outlets)],
+                ["Segments", summ.segment_count ?? "—"],
+                ["Priority tiers", summ.priority_tiers ?? "—"],
+              ].map(([k, v]) => (
+                <div key={k} className="p-5 text-center">
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">{k}</p>
+                  <p className="mt-1 text-2xl font-black">{v}</p>
                 </div>
-                <h3 className="font-bold">Segmentation agent — refined segments</h3>
-              </div>
-              {cards.length === 0 ? (
-                <p className="mt-3 text-xs text-slate-400">No segment cards in this run.</p>
-              ) : (
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {cards.map((c) => (
-                    <div key={c.cluster} className="rounded-xl border border-slate-100 p-4">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs font-black leading-snug">{c.label}</p>
-                        <Chip tone={c.growth === "High" ? "green" : c.growth === "Medium" ? "amber" : "slate"}>{c.growth || "—"}</Chip>
-                      </div>
-                      <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-[#3680CE]">
-                        {c.channel} · {c.occasion}
-                      </p>
-                      <p className="mt-2 text-[11px] text-slate-500">{c.headline}</p>
-                      {c.hero_skus.length > 0 && (
-                        <div className="mt-3">
-                          <p className="text-[9px] font-bold uppercase text-slate-400">Hero SKUs</p>
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {c.hero_skus.map((s) => <Chip key={s} tone="blue">{s}</Chip>)}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+              ))}
             </div>
           </Card>
+
+          {/* Segmentation agent — carousel (radar chart, characteristics, top SKUs, actions, USD upside) */}
+          <SegmentCarousel cards={cards} runId={selectedId} />
 
           <div className="grid gap-5 lg:grid-cols-2">
             {/* MSL agent — top SKUs across segments */}
@@ -795,21 +853,6 @@ function OutputStudio({ runs, selectedId, setSelectedId, detail, onRefresh }) {
             </Card>
           </div>
 
-          {/* Charts from segmentation + MSL */}
-          {detail.charts?.length > 0 && (
-            <Card>
-              <div className="p-5">
-                <h3 className="font-bold">Charts</h3>
-                <div className="ps-scroll mt-3 flex gap-3 overflow-x-auto pb-2">
-                  {detail.charts.map((c) => (
-                    <img key={c} src={`/api/runs/${selectedId}/chart/${encodeURIComponent(c)}`} alt={c}
-                      className="h-52 shrink-0 rounded-lg ring-1 ring-slate-200" loading="lazy" />
-                  ))}
-                </div>
-              </div>
-            </Card>
-          )}
-
           {/* Deliverables */}
           <Card>
             <div className="p-5">
@@ -829,6 +872,9 @@ function OutputStudio({ runs, selectedId, setSelectedId, detail, onRefresh }) {
           </Card>
         </>
       )}
+
+      {/* Recent outputs — moved to the bottom */}
+      <RecentOutputs runs={runs} selectedId={selectedId} onPick={setSelectedId} onRefresh={onRefresh} />
     </div>
   );
 }

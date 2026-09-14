@@ -460,20 +460,12 @@ def run_pipeline(file_path: str, project_root: str = None,
         logger.warning("MSL generation skipped (SKU file missing or no matching outlets)")
         _notify(progress_callback, 5, "MSL generation", "done", detail="skipped")
 
-    # ── Step 6: Outputs ───────────────────────────────────────────────────
-    _abort_point("output generation")
-    logger.info("Step 6/7 — Generating outputs")
-    _notify(progress_callback, 6, "Generate outputs", "running")
-    outputs = generate_outputs(df_out, labels, dq_report, output_dir,
-                               priority_narrative=priority_narrative)
-    outputs["msl"] = msl_path
-    _notify(progress_callback, 6, "Generate outputs", "done",
-            detail=f"{len(outputs.get('csv_files', []))} CSVs + Excel + PPTX")
-
-    # ── Step 7: Space Allocation ──────────────────────────────────────────
+    # ── Step 6: Space Allocation ──────────────────────────────────────────
+    # Runs before Outputs — it only depends on msl_path (step 5), not on anything
+    # Outputs produces, so this order is a pure sequencing choice, not a data dependency.
     _abort_point("space allocation")
-    logger.info("Step 7/7 — Space Allocation")
-    _notify(progress_callback, 7, "Space allocation", "running")
+    logger.info("Step 6/7 — Space Allocation")
+    _notify(progress_callback, 6, "Space allocation", "running")
     space_alloc_path = None
     if msl_path:
         try:
@@ -488,9 +480,19 @@ def run_pipeline(file_path: str, project_root: str = None,
             logger.warning(f"Space allocation failed ({type(exc).__name__}: {exc}) — skipped")
     else:
         logger.warning("Space allocation skipped — no MSL file available")
-    outputs["space_allocation"] = space_alloc_path
-    _notify(progress_callback, 7, "Space allocation", "done",
+    _notify(progress_callback, 6, "Space allocation", "done",
             detail=Path(space_alloc_path).name if space_alloc_path else "skipped")
+
+    # ── Step 7: Outputs and Inferences ────────────────────────────────────
+    _abort_point("output generation")
+    logger.info("Step 7/7 — Generating outputs and inferences")
+    _notify(progress_callback, 7, "Outputs and Inferences", "running")
+    outputs = generate_outputs(df_out, labels, dq_report, output_dir,
+                               priority_narrative=priority_narrative)
+    outputs["msl"] = msl_path
+    outputs["space_allocation"] = space_alloc_path
+    _notify(progress_callback, 7, "Outputs and Inferences", "done",
+            detail=f"{len(outputs.get('csv_files', []))} CSVs + Excel + PPTX")
 
     logger.info("=" * 65)
     logger.info("Pipeline complete!")

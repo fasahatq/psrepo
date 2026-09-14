@@ -11,8 +11,8 @@ STEP_META = {
     3: "Prioritization  (A / B / C / D + opportunity gap)",
     4: "Segmentation",
     5: "MSL generation  (must-stock list)",
-    6: "Generate outputs  (segment CSVs, Excel, PDF)",
-    7: "Space allocation  (planogram)",
+    6: "Space allocation  (planogram)",
+    7: "Outputs and Inferences  (segment CSVs, Excel, PDF, deck)",
 }
 STEP_ORDER = [1, 2, 3, 4, 5, 6, 7]
 
@@ -38,14 +38,14 @@ WEDGES = [
         "title": "Retail Value Offer",
         "band": "HOW TO WIN",
         "color": "#134E7E",   # deep navy blue
-        "steps": [7],
+        "steps": [6],
     },
     {
         "key": "pos",
         "title": "Picture of Success",
         "band": "HOW TO EXECUTE",
         "color": "#C67F0A",   # deep amber
-        "steps": [6],
+        "steps": [7],
     },
     {
         "key": "track",

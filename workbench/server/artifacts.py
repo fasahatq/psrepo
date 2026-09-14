@@ -309,6 +309,30 @@ def top_skus_across_segments(cards: list[dict], limit: int = 12) -> list[dict]:
             for k, n in counts.most_common(limit)]
 
 
+INR_PER_USD = 83.0  # documented fixed rate; revisit if a live FX rate is ever wired in
+
+
+def _with_financials(cards: list[dict], summary: dict) -> list[dict]:
+    """Attach each card's outlet count / opportunity gap (from the summary's per-
+    segment table) plus the derived USD upside figures the Output Studio cards show."""
+    by_cluster = {s["id"]: s for s in summary.get("segments", [])}
+    for card in cards:
+        s = by_cluster.get(card.get("cluster")) or {}
+        outlets = s.get("outlets")
+        avg_gap = s.get("avg_gap")
+        # Upside is floored at 0 — a negative gap means these outlets already exceed
+        # their modelled potential (agents/prioritization_agent.py's `has_upside`
+        # convention), which isn't a "revenue opportunity" to report on a card.
+        upside_monthly = (max(avg_gap, 0) * outlets / INR_PER_USD
+                          if avg_gap is not None and outlets else None)
+        card["outlets"] = outlets
+        card["avg_gap_inr"] = avg_gap
+        card["upside_usd_monthly"] = upside_monthly
+        card["revenue_impact_usd_annual"] = (upside_monthly * 12
+                                             if upside_monthly is not None else None)
+    return cards
+
+
 def run_detail(run_id: str) -> dict:
     run_dir = _run_dir(run_id)
     art = scan_artifacts(run_dir)
@@ -325,13 +349,14 @@ def run_detail(run_id: str) -> dict:
                 entry["slides"] = _slide_count(p)
             files.append(entry)
     deck = art["pptx"][0] if art["pptx"] else None
-    cards = segment_cards(run_dir)
+    summary = run_summary(run_dir)
+    cards = _with_financials(segment_cards(run_dir), summary)
     return {
         **run_brief(run_dir),
         "files": files,
         "charts": [c.name for c in art["charts"]],
         "deck_titles": _deck_titles(deck) if deck else [],
-        "summary": run_summary(run_dir),
+        "summary": summary,
         "segment_cards": cards,
         "top_skus": top_skus_across_segments(cards),
     }
