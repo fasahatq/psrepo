@@ -522,6 +522,18 @@ def build_cluster_profiles(df: pd.DataFrame, feature_cols: list,
 
 # ── Claude-powered segment labeling ─────────────────────────────────────────
 
+def _clamp_label_words(label: str, min_words: int = 2, max_words: int = 4) -> str:
+    """Enforce the 2-4 word segment-naming rule as a code-side safety net —
+    the prompt asks for it, but LLM output isn't guaranteed to comply.
+    Over-length labels are truncated (not re-worded, to stay cheap/deterministic);
+    under-length ones are left as-is since there's no sensible way to pad a
+    one-word label with meaningful content."""
+    words = (label or "").split()
+    if len(words) > max_words:
+        return " ".join(words[:max_words])
+    return label
+
+
 def label_segments_with_claude(
     profiles: List[dict],
     api_key: str,
@@ -587,7 +599,7 @@ The data includes store sales performance (VPO = monthly revenue), SKU breadth, 
 
 ## Your task
 For each cluster, provide in the CPG/FMCG context:
-1. A **label** (6-10 words) — evocative India archetype, e.g. "Schoolzone Youth Impulse GT"
+1. A **label** (2-4 words, never more) — evocative India archetype, e.g. "Schoolzone Youth Impulse" or "Urban Premium GT"
 2. A **channel** — one of: GT, MT, AfH, EC
 3. An **occasion** — one of: Immediate/GrabGo, FutureConsumption/StockUp, MealAccompaniment, Celebratory, OnTheMove, Youth, Premium, Morning
 4. A **description** (2-3 sentences) — what defines this store type, its shoppers, commercial significance
@@ -601,7 +613,7 @@ Return ONLY a valid JSON array — no prose, no markdown fences. Each element mu
 [
   {{
     "cluster_id": <int>,
-    "label": "<6-10 word label>",
+    "label": "<2-4 word label>",
     "channel": "<GT|MT|AfH|EC>",
     "occasion": "<occasion name>",
     "description": "<2-3 sentences>",
@@ -620,6 +632,8 @@ Return ONLY a valid JSON array — no prose, no markdown fences. Each element mu
     if labels is None:
         logger.warning("JSON label parsing failed — falling back to text parser")
         labels = _parse_segment_labels(text, len(profiles))
+    for info in labels.values():
+        info["label"] = _clamp_label_words(info.get("label", ""))
     return labels
 
 

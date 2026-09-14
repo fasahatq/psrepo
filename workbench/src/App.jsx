@@ -699,7 +699,7 @@ function SegmentCarousel({ cards, runId }) {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-5 md:grid-cols-[280px_1fr]">
+        <div className="mt-4 grid gap-5 md:grid-cols-[480px_1fr]">
           <div>
             <img src={`/api/runs/${runId}/chart/radar_cluster_${c.cluster}.png`} alt={`${c.label} radar`}
               className="w-full rounded-xl ring-1 ring-slate-200" loading="lazy"

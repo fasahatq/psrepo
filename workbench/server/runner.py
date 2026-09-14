@@ -95,6 +95,24 @@ class PipelineRunner:
         handler = _QueueLogHandler(self.q)
         handler.setLevel(logging.INFO)
         ps_logger = logging.getLogger("perfect_store")
+        # Without this the logger's effective level defaults to WARNING (nothing here
+        # calls logging.basicConfig the way main.py's CLI entry point does), so every
+        # logger.info(...) call across pipeline.py/agents/*.py — the useful narration,
+        # e.g. "Requesting LLM segment labels..." — was silently dropped before it
+        # ever reached the handlers below, live log panel included.
+        ps_logger.setLevel(logging.INFO)
+
+        # Persist the full log to the same file main.py's CLI runs use, so a
+        # workbench-triggered run's WARNINGs/exceptions (e.g. an LLM call that
+        # failed and fell back to generic labels) are diagnosable afterwards —
+        # previously only the in-memory SSE history had them, gone on restart.
+        log_dir = os.path.join(PROJECT_ROOT, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        file_handler = logging.FileHandler(os.path.join(log_dir, "pipeline.log"))
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(logging.Formatter(
+            "%(asctime)s | %(name)-30s | %(levelname)-5s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"))
 
         # Mirror perfect_store.* logs into _history too (via a second tiny handler).
         hist_handler = logging.Handler()
@@ -118,6 +136,7 @@ class PipelineRunner:
         def _target() -> None:
             ps_logger.addHandler(handler)
             ps_logger.addHandler(hist_handler)
+            ps_logger.addHandler(file_handler)
             try:
                 self.result = run_pipeline(
                     file_path, PROJECT_ROOT,
@@ -138,6 +157,8 @@ class PipelineRunner:
             finally:
                 ps_logger.removeHandler(handler)
                 ps_logger.removeHandler(hist_handler)
+                ps_logger.removeHandler(file_handler)
+                file_handler.close()
                 self.ended_at = datetime.now()
                 if self.result:
                     self.output_dir = self.result.get("output_dir", self.output_dir)

@@ -423,10 +423,27 @@ def run_pipeline(file_path: str, project_root: str = None,
         1 for info in labels.values()
         if (info.get("validation") or {}).get("weak_or_non_actionable")
     )
+    # Detect the generic "Segment N" fallback (used when label_segments_with_claude
+    # fails — see agents/segmentation_agent.py) so a transient LLM failure is visible
+    # live in the run's step detail, not just buried in a WARNING log line.
+    n_generic = sum(
+        1 for cid, info in labels.items()
+        if info.get("label") == f"Segment {cid}"
+    )
     _notify(progress_callback, 4, "Segmentation", "done",
             detail=f"{n_segments} segments / {len(df_out):,} outlets"
-                   + (f" | {n_flagged} flagged for review" if n_flagged else ""))
+                   + (f" | {n_flagged} flagged for review" if n_flagged else "")
+                   + (f" | ⚠ {n_generic} segment(s) got generic names — LLM labeling failed"
+                      if n_generic else ""))
     logger.info(f"Segmentation complete: {n_segments} segments across {len(df_out):,} outlets")
+    if n_generic:
+        logger.warning(
+            f"{n_generic}/{n_segments} segment(s) fell back to a generic 'Segment N' "
+            f"label — label_segments_with_claude failed for this run (see the WARNING "
+            f"above from perfect_store.segmentation for the exact cause). The deck, "
+            f"Excel and CSVs will show generic names for those segments; rerunning "
+            f"usually resolves a transient LLM failure."
+        )
     for cid, info in labels.items():
         cnt = (df_out["cluster"] == cid).sum()
         conf = info.get("confidence", "?")

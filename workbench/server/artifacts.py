@@ -330,6 +330,8 @@ def _with_financials(cards: list[dict], summary: dict) -> list[dict]:
         card["upside_usd_monthly"] = upside_monthly
         card["revenue_impact_usd_annual"] = (upside_monthly * 12
                                              if upside_monthly is not None else None)
+    # Highest upside potential first — that's the carousel's default (segment 1 of N) order.
+    cards.sort(key=lambda c: c["upside_usd_monthly"] or 0, reverse=True)
     return cards
 
 

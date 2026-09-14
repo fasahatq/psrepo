@@ -72,6 +72,11 @@ class PipelineRunner:
         handler = _QueueLogHandler(self.q)
         handler.setLevel(logging.INFO)
         ps_logger = logging.getLogger("perfect_store")
+        # Streamlit never calls logging.basicConfig (only main.py's CLI path does),
+        # so the logger's effective level defaults to WARNING and every
+        # logger.info(...) call was silently dropped before reaching the live log
+        # panel below. Same gap as workbench/server/runner.py — fixed there too.
+        ps_logger.setLevel(logging.INFO)
 
         def _target() -> None:
             ps_logger.addHandler(handler)

@@ -194,6 +194,12 @@ def _card_to_text(card: dict) -> str:
     return "\n".join(lines)
 
 
+_RADAR_INK = "#1F2937"       # matches ppt_agent.py's _PALETTE_INK
+_RADAR_GRID = "#E3E6EA"      # soft gridlines/spines
+_RADAR_MUTE = "#9AA1AC"      # radial ticks + universe-avg line
+_RADAR_BG = "#FAFBFC"        # subtle card background
+
+
 def plot_radar_chart(cluster_id: int, cluster_name: str,
                      scores: list, universe_avg: list,
                      output_dir: str) -> str:
@@ -213,22 +219,39 @@ def plot_radar_chart(cluster_id: int, cluster_name: str,
     avg_plot = list(universe_avg) + [universe_avg[0]]
     angles_plot = angles + [angles[0]]
 
-    fig, ax = plt.subplots(figsize=(5, 5), subplot_kw=dict(polar=True))
-    ax.plot(angles_plot, scores_plot, color=colour, linewidth=2, label=cluster_name)
-    ax.fill(angles_plot, scores_plot, color=colour, alpha=0.25)
-    ax.plot(angles_plot, avg_plot, color="#888888", linewidth=1.5,
-            linestyle="--", label="Universe Avg")
+    fig, ax = plt.subplots(figsize=(5.2, 5.9), subplot_kw=dict(polar=True))
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor(_RADAR_BG)
+
+    # Universe average — thin, muted, drawn first so it sits behind the cluster shape.
+    ax.plot(angles_plot, avg_plot, color=_RADAR_MUTE, linewidth=1.3,
+            linestyle=(0, (1, 2)), label="Universe Avg", zorder=2)
+
+    # Cluster shape — filled, with a marker on every vertex for a crisp dashboard look.
+    ax.plot(angles_plot, scores_plot, color=colour, linewidth=2.4, label=cluster_name,
+            marker="o", markersize=5, markerfacecolor=colour,
+            markeredgecolor="white", markeredgewidth=1.1, zorder=3)
+    ax.fill(angles_plot, scores_plot, color=colour, alpha=0.22, zorder=1)
+
     ax.set_xticks(angles)
-    ax.set_xticklabels(_RADAR_DIMENSIONS, size=8)
+    ax.set_xticklabels(_RADAR_DIMENSIONS, size=8.5, color=_RADAR_INK, fontweight="bold")
+    ax.tick_params(axis="x", pad=12)  # keep labels clear of the outer grid spokes
     ax.set_ylim(0, 5)
     ax.set_yticks([1, 2, 3, 4, 5])
-    ax.yaxis.set_tick_params(labelsize=7)
-    ax.legend(loc="upper right", bbox_to_anchor=(1.35, 1.15), fontsize=8)
-    ax.set_title(cluster_name, size=11, fontweight="bold", pad=18)
+    ax.set_rlabel_position(200)  # tuck the 1–5 scale away from the busiest part of the shape
+    ax.yaxis.set_tick_params(labelsize=7, colors=_RADAR_MUTE)
+    ax.grid(color=_RADAR_GRID, linewidth=0.8)
+    ax.spines["polar"].set_color(_RADAR_GRID)
+
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=2,
+             fontsize=8, frameon=False)
+    ax.set_title(cluster_name, size=12.5, fontweight="bold", color=_RADAR_INK, pad=20)
     fig.tight_layout()
 
     path = os.path.join(_charts_dir(output_dir), f"radar_cluster_{cluster_id}.png")
-    fig.savefig(path, dpi=120, bbox_inches="tight")
+    # pad_inches guards against the bold category labels (e.g. "Footfall") clipping
+    # at the tight-bbox edge on some angles.
+    fig.savefig(path, dpi=150, bbox_inches="tight", pad_inches=0.15, facecolor="white")
     plt.close(fig)
     return path
 
@@ -246,21 +269,35 @@ def plot_cluster_bar_chart(cluster_names: list, vpo_values: list,
     x = np.arange(len(cluster_names))
     width = 0.35
     fig, ax1 = plt.subplots(figsize=(10, 5))
+    fig.patch.set_facecolor("white")
     ax2 = ax1.twinx()
-    ax1.bar(x - width / 2, vpo_values, width, color="#004B87", label="Avg VPO (₹)")
-    ax2.bar(x + width / 2, outlet_counts, width, color="#009CDE", label="Outlet Count")
-    ax1.set_xlabel("Cluster")
-    ax1.set_ylabel("Avg Monthly VPO (₹)", color="#004B87")
-    ax2.set_ylabel("Outlet Count", color="#009CDE")
+    ax1.set_facecolor(_RADAR_BG)
+    ax1.bar(x - width / 2, vpo_values, width, color="#004B87", label="Avg VPO (₹)",
+           edgecolor="white", linewidth=0.6, zorder=3)
+    ax2.bar(x + width / 2, outlet_counts, width, color="#009CDE", label="Outlet Count",
+           edgecolor="white", linewidth=0.6, zorder=3)
+    ax1.set_xlabel("Cluster", color=_RADAR_INK, fontsize=9.5)
+    ax1.set_ylabel("Avg Monthly VPO (₹)", color="#004B87", fontsize=9.5)
+    ax2.set_ylabel("Outlet Count", color="#009CDE", fontsize=9.5)
     ax1.set_xticks(x)
-    ax1.set_xticklabels(cluster_names, rotation=30, ha="right", fontsize=9)
+    ax1.set_xticklabels(cluster_names, rotation=30, ha="right", fontsize=9, color=_RADAR_INK)
+    ax1.grid(axis="y", color=_RADAR_GRID, linewidth=0.8, zorder=0)
+    for spine in ("top", "right"):
+        ax1.spines[spine].set_visible(False)
+        ax2.spines[spine].set_visible(False)
+    for spine in ("left", "bottom"):
+        ax1.spines[spine].set_color(_RADAR_GRID)
+        ax2.spines[spine].set_color(_RADAR_GRID)
+    ax1.tick_params(colors=_RADAR_MUTE, labelsize=8)
+    ax2.tick_params(colors=_RADAR_MUTE, labelsize=8)
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper right")
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper right",
+              fontsize=8.5, frameon=False)
     fig.tight_layout()
 
     path = os.path.join(_charts_dir(output_dir), "cluster_bar_overview.png")
-    fig.savefig(path, dpi=120, bbox_inches="tight")
+    fig.savefig(path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return path
 
